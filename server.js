@@ -1,92 +1,81 @@
 const express = require('express');
 const http = require('http');
-const { Server } = require("socket.io");
+const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
-
-// --- MONGODB QOŞULMASI ---
-// 127.0.0.1 sənin lokal kompyuterindir
-mongoose.connect("mongodb+srv://teymurisbarov:<db_password>@cluster0.1xrr77f.mongodb.net/?appName=Cluster0")
-  .then(() => console.log("✅ Bulud bazasına qoşulduq!"))
-  .catch(err => console.log("❌ Baza xətası:", err));
-
-// Oyunçu modeli (Database-də məlumatın necə görünəcəyi)
-const UserSchema = new mongoose.Schema({
-    fullname: String,
-    email: { type: String, unique: true, required: true },
-    phone: { type: String, unique: true, required: true },
-    password: { type: String, required: true }, // Şifrəni də saxlayaq
-    balance: { type: Number, default: 100 },
-    online: { type: Boolean, default: false }
+const io = new Server(server, {
+  cors: {
+    origin: "*", // Hamıya icazə ver
+    methods: ["GET", "POST"]
+  }
 });
 
-const User = mongoose.model('User', UserSchema);
+// MONGODB BAĞLANTISI (Şifrəni yoxla!)
+const MONGO_URI = "mongodb+srv://teymurisbarov:123456Teymur@cluster0.1xrr77f.mongodb.net/";
 
-// --- SERVER MƏNTİQİ ---
+mongoose.connect(MONGO_URI)
+  .then(() => console.log("✅ 1. BAZAYA QOŞULDUQ!"))
+  .catch(err => console.log("❌ BAZA XƏTASI:", err.message));
+
+// USER MODELİ (Bu hissə mütləq olmalıdır)
+const userSchema = new mongoose.Schema({
+  fullname: String,
+  email: { type: String, unique: true },
+  phone: String,
+  password: { type: String, required: true },
+  balance: { type: Number, default: 0 }
+});
+
+const User = mongoose.model('User', userSchema);
+
 io.on('connection', (socket) => {
-    console.log('Yeni əlaqə:', socket.id);
+  console.log("🟢 Yeni əlaqə:", socket.id);
 
-    // Giriş və ya Qeydiyyat
-    socket.on('login', async (username) => {
-        try {
-            let user = await User.findOne({ username: username });
-
-            if (!user) {
-                // Əgər belə oyunçu yoxdursa, yenisini yarat
-                user = new User({ username: username, balance: 100 });
-                await user.save();
-                console.log(`Yeni oyunçu yaradıldı: ${username}`);
-            }
-
-            socket.username = user.username;
-            socket.emit('login_success', { username: user.username, balance: user.balance });
-        } catch (err) {
-            console.log("Giriş zamanı xəta:", err);
-        }
-        socket.on('register', async (userData) => {
+  // QEYDİYYAT
+  socket.on('register', async (userData) => {
+    console.log("📩 Qeydiyyat istəyi:", userData.email);
     try {
-        const newUser = new User(userData);
+        // Email yoxlaması
+        const existingUser = await User.findOne({ email: userData.email });
+        if (existingUser) {
+            return socket.emit('error_message', "Bu email artıq istifadə olunur!");
+        }
+
+        const newUser = new User({
+            fullname: userData.fullname,
+            email: userData.email,
+            phone: userData.phone,
+            password: userData.password,
+            balance: 0
+        });
+
         await newUser.save();
-        console.log("Yeni istifadəçi bazaya yazıldı:", userData.fullname);
-        socket.emit('register_success', { message: "Qeydiyyat tamamlandı!" });
+        console.log("💎 İSTİFADƏÇİ YAZILDI!");
+        socket.emit('register_success', { message: "Uğurlu!" });
     } catch (err) {
-        console.log("Qeydiyyat xətası:", err);
-        socket.emit('error_message', 'Xəta baş verdi!');
+        console.log("🔴 XƏTA:", err.message);
+        socket.emit('error_message', "Server xətası: " + err.message);
     }
 });
-    });
-
-    // Otağa qoşulma
-    socket.on('join_room', (roomName) => {
-        const room = io.sockets.adapter.rooms.get(roomName);
-        const playerCount = room ? room.size : 0;
-
-        if (playerCount < 10) {
-            socket.join(roomName);
-            io.to(roomName).emit('message', `${socket.username} otağa girdi. Say: ${playerCount + 1}`);
+  // DAXİL OL
+  socket.on('login', async (name) => {
+    try {
+        // Həm fullname, həm də email ilə yoxlayaq ki, səhv olmasın
+        const user = await User.findOne({ fullname: name });
+        if (user) {
+            socket.emit('login_success', { username: user.fullname, balance: user.balance });
         } else {
-            socket.emit('error_message', 'Bu otaq doludur!');
+            socket.emit('error_message', 'İstifadəçi tapılmadı!');
         }
-    });
+    } catch (err) {
+        socket.emit('error_message', 'Giriş xətası!');
+    }
+});
 
-    // Balans Artırma
-    socket.on('add_money', async (amount) => {
-        if (socket.username) {
-            const user = await User.findOneAndUpdate(
-                { username: socket.username },
-                { $inc: { balance: amount } },
-                { new: true }
-            );
-            socket.emit('update_balance', user.balance);
-        }
-    });
+  socket.on('disconnect', () => console.log("🔴 Əlaqə kəsildi"));
 });
 
 const PORT = process.env.PORT || 3000;
-
-server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server ${PORT} portunda dünyaya açıldı...`);
-});
+server.listen(PORT, () => console.log(`🚀 Server ${PORT} portunda hazırdır!`));
