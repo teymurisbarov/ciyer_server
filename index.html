@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D Kart Oyunu</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a2a3a; color: white; text-align: center; padding: 20px; }
+        .container { max-width: 400px; margin: auto; background: #2c3e50; padding: 20px; border-radius: 15px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        input { width: 80%; padding: 10px; margin: 10px 0; border-radius: 5px; border: none; }
+        button { background: #27ae60; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #2ecc71; }
+        #gameArea { display: none; } /* Giriş etmədən görünməsin */
+        #log { background: #000; color: #00ff00; padding: 10px; height: 150px; overflow-y: auto; margin-top: 20px; text-align: left; font-size: 12px; border-radius: 5px; }
+        .stat { font-size: 1.2em; margin: 10px 0; color: #f1c40f; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🃏 Kart Oyunu</h1>
+
+        <div id="loginSection">
+            <input type="text" id="usernameInput" placeholder="İstifadəçi adını yaz...">
+            <br>
+            <button onclick="login()">Oyuna Daxil Ol</button>
+        </div>
+
+        <div id="gameArea">
+            <div class="stat">Oyunçu: <span id="displayName">---</span></div>
+            <div class="stat">Balans: <span id="balanceDisplay">0</span> AZN</div>
+            
+            <hr>
+            
+            <input type="text" id="roomInput" placeholder="Otaq adı (məs: Otaq-1)">
+            <button onclick="joinRoom()">Otağa Qoşul</button>
+            
+            <div id="log">Sistem mesajları...</div>
+        </div>
+    </div>
+
+    <script>
+        // Serverə qoşuluruq (Serverin açıq olduğundan əmin ol!)
+        const socket = io("https://dde0-89-147-194-139.ngrok-free.app");
+        const logDiv = document.getElementById('log');
+
+        function login() {
+            const user = document.getElementById('usernameInput').value;
+            if (user.trim() !== "") {
+                socket.emit('login', user);
+            } else {
+                alert("Zəhmət olmasa ad yazın!");
+            }
+        }
+
+        socket.on('login_success', (data) => {
+            document.getElementById('loginSection').style.display = 'none';
+            document.getElementById('gameArea').style.display = 'block';
+            document.getElementById('displayName').innerText = data.username;
+            document.getElementById('balanceDisplay').innerText = data.balance;
+            addLog("Sistemə daxil oldunuz.");
+        });
+
+        function joinRoom() {
+            const room = document.getElementById('roomInput').value;
+            if (room) {
+                socket.emit('join_room', room);
+            }
+        }
+
+        socket.on('message', (msg) => {
+            addLog("📩 " + msg);
+        });
+
+        socket.on('update_balance', (newBalance) => {
+            document.getElementById('balanceDisplay').innerText = newBalance;
+            addLog("💰 Balans yeniləndi!");
+        });
+
+        socket.on('error_message', (err) => {
+            alert(err);
+            addLog("❌ Xəta: " + err);
+        });
+
+        function addLog(text) {
+            logDiv.innerHTML += `<div>${text}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+    </script>
+</body>
+</html>
