@@ -9,9 +9,9 @@ const io = new Server(server, { cors: { origin: "*" } });
 
 // --- MONGODB QOŞULMASI ---
 // 127.0.0.1 sənin lokal kompyuterindir
-mongoose.connect('mongodb+srv://teymurisbarov:<db_password>@cluster0.1xrr77f.mongodb.net/?appName=Cluster0')
-    .then(() => console.log("✅ MongoDB-yə uğurla qoşulduq!"))
-    .catch(err => console.error("❌ Baza xətası:", err));
+mongoose.connect("mongodb+srv://teymurisbarov:<db_password>@cluster0.1xrr77f.mongodb.net/?appName=Cluster0")
+  .then(() => console.log("✅ Bulud bazasına qoşulduq!"))
+  .catch(err => console.log("❌ Baza xətası:", err));
 
 // Oyunçu modeli (Database-də məlumatın necə görünəcəyi)
 const UserSchema = new mongoose.Schema({
