@@ -150,12 +150,26 @@ io.on('connection', (socket) => {
   // 4. OYUNU BAŞLATMAQ (MANUAL)
   socket.on('start_game_manual', (data) => {
     const room = activeRooms.get(data.roomId);
+    
     if (room && room.creator === data.username && room.players.length >= 2) {
-      room.status = 'playing'; // Artıq lobby-də görsənməyəcək
-      io.to(data.roomId).emit('battle_start', {
-        room: room.id,
-        players: room.players
+      const deck = createDeck();
+      
+      // Her oyuncuya özel 6 kart veriyoruz
+      room.players.forEach((player) => {
+        player.hand = deck.splice(0, 6); // Desteden 6 kart kes ve oyuncuya ver
       });
+
+      room.status = 'playing';
+      room.trumpCard = deck[0]; // Koz (Trump) kartı destenin en altındaki kart olsun
+      
+      // Herkese kendi elini ve oyun bilgisini gönder
+      io.to(data.roomId).emit('battle_start', {
+        roomId: room.id,
+        players: room.players, // Burada her oyuncu kendi elini görecek (gelişmiş versiyonda filtreleyeceğiz)
+        trumpCard: room.trumpCard,
+        deckCount: deck.length
+      });
+
       broadcastRoomList();
     }
   });
