@@ -76,28 +76,37 @@ io.on('connection', (socket) => {
     const room = activeRooms.get(data.roomId);
 
     if (room) {
-      // Otaqda yer varmı və oyunçu artıq orada deyilmi?
       const isAlreadyIn = room.players.find(p => p.username === data.username);
       
       if (room.players.length < room.maxPlayers && !isAlreadyIn) {
         room.players.push({ id: socket.id, username: data.username });
         socket.join(data.roomId);
 
-        // Otaqdakı hər kəsə yeni oyunçunun gəldiyini xəbər ver
+        // Otaq daxilindəkilərə yeni oyunçunu bildir
         io.to(data.roomId).emit('player_joined', {
           players: room.players,
           count: room.players.length
         });
 
-        console.log(`👤 ${data.username} otağa qoşuldu (${room.players.length}/10)`);
+        // --- ƏSAS HİSSƏ BURADADIR ---
+        // Əgər otaq dolubsa (məsələn 2 nəfərlik otaqdırsa və 2 nəfər varsa)
+        if (room.players.length === room.maxPlayers) {
+          room.status = 'playing'; // Otağı siyahıdan çıxarmaq üçün
+          
+          // Otaqdakı hamıya oyunun başladığını bildir
+          io.to(data.roomId).emit('battle_start', {
+            room: room.id,
+            players: room.players,
+            name: room.name
+          });
+          
+          console.log(`🎮 Oyun başladı: ${room.name}`);
+        }
+
         broadcastRoomList();
-      } else if (isAlreadyIn) {
-        socket.emit('error_message', 'Siz artıq bu otaqdasınız!');
       } else {
-        socket.emit('error_message', 'Otaq doludur!');
+        socket.emit('error_message', 'Otaq doludur və ya artıq daxildəsiniz!');
       }
-    } else {
-      socket.emit('error_message', 'Otaq tapılmadı!');
     }
   });
 
