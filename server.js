@@ -49,26 +49,21 @@ io.on('connection', (socket) => {
   socket.on('create_custom_room', (data) => {
     const roomId = `room_${socket.id}`;
     
-    // Əgər oyunçu köhnə otağını təmizləmədən yeni otaq yaratmaq istəyirsə, köhnəni silirik
-    if (activeRooms.has(roomId)) {
-      activeRooms.delete(roomId);
-    }
+    if (activeRooms.has(roomId)) activeRooms.delete(roomId);
 
     const newRoom = {
       id: roomId,
       creator: data.username,
-      name: `${data.username}-in otağı`,
+      name: data.roomName, // Lobby-dən gələn "Yardımlı Toyu"
       players: [{ id: socket.id, username: data.username }],
-      maxPlayers: 10, // Sənin istədiyin limit
+      maxPlayers: data.maxPlayers || 2, // Lobby-dən gələn limit (2-10)
       status: 'waiting',
       createdAt: Date.now()
     };
 
     activeRooms.set(roomId, newRoom);
     socket.join(roomId);
-    
-    console.log(`🏠 Otaq yaradıldı: ${newRoom.name}`);
-    broadcastRoomList(); // Hamıya yenilənmiş siyahını göndər
+    broadcastRoomList();
   });
 
   // 3. AKTİV OTAQLARI İSTƏMƏK
