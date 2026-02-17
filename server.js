@@ -2,7 +2,39 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
+function createDeck() {
+    const suits = ['Hearts', 'Diamonds', 'Clubs', 'Spades']; // Ürək, Kərpic, Xaç, Pika
+    const values = [
+        { name: '6', score: 6 },
+        { name: '7', score: 7 },
+        { name: '8', score: 8 },
+        { name: '9', score: 9 },
+        { name: '10', score: 10 },
+        { name: 'B', score: 10 }, // J (Valet)
+        { name: 'D', score: 10 }, // Q (Dama)
+        { name: 'K', score: 10 }, // K (Korol)
+        { name: 'T', score: 11 }  // A (Tus)
+    ];
+    
+    let deck = [];
+    suits.forEach(suit => {
+        values.forEach(v => {
+            deck.push({ 
+                suit, 
+                value: v.name, 
+                score: v.score,
+                id: `${suit}_${v.name}` 
+            });
+        });
+    });
 
+    // Qarışdırırıq
+    for (let i = deck.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+    return deck;
+}
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
