@@ -92,6 +92,11 @@ io.on('connection', (socket) => {
       const user = await User.findOne({ email: data.identifier.trim().toLowerCase() });
       if (user && user.password === data.password) {
         socket.emit('login_success', { username: user.fullname, balance: user.balance });
+        
+        // 🔥 ƏSAS HİSSƏ: Giriş edənə dərhal otaqları göndər
+        const list = Array.from(activeRooms.values()).filter(r => r.status === 'waiting');
+        socket.emit('update_room_list', list);
+        
       } else {
         socket.emit('error_message', 'Məlumatlar yanlışdır!');
       }
