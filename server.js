@@ -35,6 +35,20 @@ function createDeck() {
     }
     return deck;
 }
+function calculateHandScore(hand) {
+    let tuses = hand.filter(c => c.value === 'T');
+    let sixes = hand.filter(c => c.value === '6');
+
+    // 3 dənə Tus = 33 xal
+    if (tuses.length === 3) return 33;
+    // 2 dənə Tus = 22 xal
+    if (tuses.length === 2) return 22;
+    // 3 dənə Altılıq = 32 xal
+    if (sixes.length === 3) return 32;
+
+    // Əgər bu kombinasiyalar yoxdursa, normal cəmlə
+    return hand.reduce((total, card) => total + card.score, 0);
+}
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
