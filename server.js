@@ -36,18 +36,28 @@ function createDeck() {
     return deck;
 }
 function calculateHandScore(hand) {
-    let tuses = hand.filter(c => c.value === 'T');
-    let sixes = hand.filter(c => c.value === '6');
+    const tuses = hand.filter(c => c.value === 'T');
+    const sixes = hand.filter(c => c.value === '6');
 
-    // 3 dənə Tus = 33 xal
-    if (tuses.length === 3) return 33;
-    // 2 dənə Tus = 22 xal
-    if (tuses.length === 2) return 22;
-    // 3 dənə Altılıq = 32 xal
-    if (sixes.length === 3) return 32;
+    // --- XÜSUSİ HALLAR ---
+    if (tuses.length === 3) return 33; // 3 ədəd Tus
+    if (tuses.length === 2) return 22; // 2 ədəd Tus
+    if (sixes.length === 3) return 32; // 3 ədəd 6-lıq (novunden asli olmayarag)
 
-    // Əgər bu kombinasiyalar yoxdursa, normal cəmlə
-    return hand.reduce((total, card) => total + card.score, 0);
+    // --- STANDART HESABLAMA (İşarələrinə görə) ---
+    // Hər işarə (Ürək, Kərpic, Xaç, Pika) üzrə xalları ayrı-ayrılıqda cəmləyirik
+    const suits = ['Hearts', 'Diamonds', 'Clubs', 'Spades'];
+    let maxSuitScore = 0;
+
+    suits.forEach(suit => {
+        const suitCards = hand.filter(c => c.suit === suit);
+        const suitSum = suitCards.reduce((sum, card) => sum + card.score, 0);
+        if (suitSum > maxSuitScore) maxSuitScore = suitSum;
+    });
+
+    // Əgər əldə eyni rəqəmdən 3 dənə varsa (məsələn 3 dənə 10-luq), 
+    // bəzi qaydalarda bu da xüsusi hesablanır. Amma standartda ən yüksək rəng cəmi götürülür.
+    return maxSuitScore;
 }
 const app = express();
 const server = http.createServer(app);
@@ -150,27 +160,20 @@ io.on('connection', (socket) => {
   // 4. OYUNU BAŞLATMAQ (MANUAL)
   socket.on('start_game_manual', (data) => {
     const room = activeRooms.get(data.roomId);
-    
-    if (room && room.creator === data.username && room.players.length >= 2) {
+    if (room && room.players.length >= 2) {
       const deck = createDeck();
       
-      // Her oyuncuya özel 6 kart veriyoruz
       room.players.forEach((player) => {
-        player.hand = deck.splice(0, 6); // Desteden 6 kart kes ve oyuncuya ver
+        player.hand = deck.splice(0, 3); // Hər oyunçuya 3 kart
+        player.score = calculateHandScore(player.hand); // Xalını serverdə hesablayırıq
       });
 
       room.status = 'playing';
-      room.trumpCard = deck[0]; // Koz (Trump) kartı destenin en altındaki kart olsun
-      
-      // Herkese kendi elini ve oyun bilgisini gönder
       io.to(data.roomId).emit('battle_start', {
         roomId: room.id,
-        players: room.players, // Burada her oyuncu kendi elini görecek (gelişmiş versiyonda filtreleyeceğiz)
-        trumpCard: room.trumpCard,
+        players: room.players, // Kartlar və xallar burada gedir
         deckCount: deck.length
       });
-
-      broadcastRoomList();
     }
   });
 
