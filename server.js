@@ -54,15 +54,23 @@ io.on('connection', (socket) => {
     const newRoom = {
       id: roomId,
       creator: data.username,
-      name: data.roomName, // Lobby-dən gələn "Yardımlı Toyu"
+      name: data.roomName,
       players: [{ id: socket.id, username: data.username }],
-      maxPlayers: data.maxPlayers || 2, // Lobby-dən gələn limit (2-10)
+      maxPlayers: data.maxPlayers || 2,
       status: 'waiting',
       createdAt: Date.now()
     };
 
     activeRooms.set(roomId, newRoom);
     socket.join(roomId);
+    
+    // Otaq yaradanın özünə xüsusi cavab göndəririk
+    socket.emit('room_created_success', {
+        room: newRoom.id,
+        players: newRoom.players,
+        name: newRoom.name
+    });
+
     broadcastRoomList();
   });
 
