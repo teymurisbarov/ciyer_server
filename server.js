@@ -1,228 +1,180 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const mongoose = require('mongoose');
-function createDeck() {
-    const suits = ['Hearts', 'Diamonds', 'Clubs', 'Spades']; // Ürək, Kərpic, Xaç, Pika
+const io = require('socket.io')(3000, {
+    cors: { origin: "*" }
+});
+
+let rooms = {}; // Otaqların məlumatı
+let turnTimers = {}; // Hər otaq üçün aktiv taymerlər
+
+// --- KÖMƏKÇİ FUNKSİYALAR ---
+
+// Kartları qarışdır və payla (36 kartlıq Seka dəstəsi)
+function shuffleAndDeal(players) {
+    const suits = ['Hearts', 'Spades', 'Clubs', 'Diamonds'];
     const values = [
-        { name: '6', score: 6 },
-        { name: '7', score: 7 },
-        { name: '8', score: 8 },
-        { name: '9', score: 9 },
-        { name: '10', score: 10 },
-        { name: 'B', score: 10 }, // J (Valet)
-        { name: 'D', score: 10 }, // Q (Dama)
-        { name: 'K', score: 10 }, // K (Korol)
-        { name: 'T', score: 11 }  // A (Tus)
+        { v: '6', s: 6 }, { v: '7', s: 7 }, { v: '8', s: 8 }, 
+        { v: '9', s: 9 }, { v: '10', s: 10 }, { v: 'B', s: 10 }, 
+        { v: 'D', s: 10 }, { v: 'K', s: 10 }, { v: 'T', s: 11 }
     ];
     
     let deck = [];
     suits.forEach(suit => {
-        values.forEach(v => {
-            deck.push({ 
-                suit, 
-                value: v.name, 
-                score: v.score,
-                id: `${suit}_${v.name}` 
-            });
+        values.forEach(val => {
+            deck.push({ suit, value: val.v, score: val.s });
         });
     });
 
-    // Qarışdırırıq
+    // Qarışdır
     for (let i = deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [deck[i], deck[j]] = [deck[j], deck[i]];
     }
-    return deck;
-}
-function calculateHandScore(hand) {
-    const tuses = hand.filter(c => c.value === 'T');
-    const sixes = hand.filter(c => c.value === '6');
 
-    // --- XÜSUSİ HALLAR ---
-    if (tuses.length === 3) return 33; // 3 ədəd Tus
-    if (tuses.length === 2) return 22; // 2 ədəd Tus
-    if (sixes.length === 3) return 32; // 3 ədəd 6-lıq (novunden asli olmayarag)
-
-    // --- STANDART HESABLAMA (İşarələrinə görə) ---
-    // Hər işarə (Ürək, Kərpic, Xaç, Pika) üzrə xalları ayrı-ayrılıqda cəmləyirik
-    const suits = ['Hearts', 'Diamonds', 'Clubs', 'Spades'];
-    let maxSuitScore = 0;
-
-    suits.forEach(suit => {
-        const suitCards = hand.filter(c => c.suit === suit);
-        const suitSum = suitCards.reduce((sum, card) => sum + card.score, 0);
-        if (suitSum > maxSuitScore) maxSuitScore = suitSum;
+    // Payla (Hərəsinə 3 kart)
+    players.forEach(p => {
+        p.hand = [deck.pop(), deck.pop(), deck.pop()];
+        p.score = calculateSekaScore(p.hand);
+        p.status = 'active'; // 'active', 'pass', 'folded'
     });
-
-    // Əgər əldə eyni rəqəmdən 3 dənə varsa (məsələn 3 dənə 10-luq), 
-    // bəzi qaydalarda bu da xüsusi hesablanır. Amma standartda ən yüksək rəng cəmi götürülür.
-    return maxSuitScore;
 }
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*", methods: ["GET", "POST"] },
-  pingTimeout: 60000,
-});
 
-// --- MONGODB ---
-const MONGO_URI = "mongodb+srv://teymurisbarov:123456Teymur@cluster0.1xrr77f.mongodb.net/ciyer_database?retryWrites=true&w=majority";
-mongoose.connect(MONGO_URI)
-  .then(() => console.log("✅ MongoDB Hazırdır"))
-  .catch(err => console.error("❌ Baza xətası:", err));
+// Seka Xal Hesablama Qaydası
+function calculateSekaScore(hand) {
+    const tuses = hand.filter(c => c.value === 'T');
+    if (tuses.length === 3) return 33;
+    if (tuses.length === 2) return 22;
 
-// --- USER MODEL ---
-const User = mongoose.model('User', new mongoose.Schema({
-  fullname: String,
-  email: { type: String, unique: true },
-  password: { type: String, required: true },
-  balance: { type: Number, default: 0 }
-}));
+    const suits = ['Hearts', 'Spades', 'Clubs', 'Diamonds'];
+    let maxScore = 0;
+    suits.forEach(s => {
+        const suitSum = hand.filter(c => c.suit === s).reduce((sum, c) => sum + c.score, 0);
+        if (suitSum > maxScore) maxScore = suitSum;
+    });
+    
+    // Eyni rəqəmlər (məsələn 3 dənə 9-luq)
+    const valGroup = hand[0].value === hand[1].value && hand[1].value === hand[2].value;
+    if (valGroup) {
+        const tripleScore = hand[0].value === '6' ? 32 : (hand[0].score * 3);
+        if (tripleScore > maxScore) maxScore = tripleScore;
+    }
 
-// --- GLOBAL STATE ---
-let activeRooms = new Map();
+    return maxScore;
+}
+
+// --- TAYMER VƏ NÖVBƏ İDARƏETMƏSİ ---
+
+function startTurnTimer(roomId) {
+    const room = rooms[roomId];
+    if (!room) return;
+
+    // Əgər əvvəlki taymer varsa, təmizlə
+    if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
+
+    const activePlayer = room.players[room.turnIndex];
+
+    // 30 saniyəlik taymer
+    turnTimers[roomId] = setTimeout(() => {
+        console.log(`Vaxt bitdi: ${activePlayer.username} avtomatik PAS edildi.`);
+        processMove(roomId, activePlayer.username, 'pass');
+    }, 30000); 
+}
+
+function processMove(roomId, username, moveType) {
+    const room = rooms[roomId];
+    if (!room) return;
+
+    const player = room.players.find(p => p.username === username);
+    if (!player || room.players[room.turnIndex].username !== username) return;
+
+    // Hərəkət məntiqi
+    if (moveType === 'pass') {
+        player.status = 'pass';
+    } else if (moveType === 'raise') {
+        room.totalBank += 10; // Nümunə: hər artım 10 AZN
+    }
+
+    // Növbəni keçir (Növbəti aktiv oyunçuya)
+    let nextIndex = (room.turnIndex + 1) % room.players.length;
+    // Pas keçənləri tullayırıq
+    while (room.players[nextIndex].status === 'pass' && room.players.filter(p => p.status === 'active').length > 1) {
+        nextIndex = (nextIndex + 1) % room.players.length;
+    }
+
+    room.turnIndex = nextIndex;
+    
+    // Hamı pas veribsə və ya 1 nəfər qalıbsa oyunu bitir (sadələşdirilmiş)
+    const activeCount = room.players.filter(p => p.status === 'active').length;
+    if (activeCount <= 1 || moveType === 'show') {
+        const winner = room.players.sort((a, b) => b.score - a.score)[0];
+        io.to(roomId).emit('game_over', { winner: winner.username, score: winner.score });
+        clearTimeout(turnTimers[roomId]);
+    } else {
+        io.to(roomId).emit('update_game_state', {
+            players: room.players,
+            totalBank: room.totalBank,
+            activePlayer: room.players[room.turnIndex].username
+        });
+        startTurnTimer(roomId);
+    }
+}
+
+// --- SOCKET BAĞLANTISI ---
 
 io.on('connection', (socket) => {
-  console.log(`🟢 Qoşuldu: ${socket.id}`);
+    console.log('Yeni oyunçu qoşuldu:', socket.id);
 
-  // 1. LOGIN
-  socket.on('login', async (data) => {
-    try {
-      const user = await User.findOne({ email: data.identifier.trim().toLowerCase() });
-      if (user && user.password === data.password) {
-        socket.emit('login_success', { username: user.fullname, balance: user.balance });
-        
-        // 🔥 ƏSAS HİSSƏ: Giriş edənə dərhal otaqları göndər
-        const list = Array.from(activeRooms.values()).filter(r => r.status === 'waiting');
-        socket.emit('update_room_list', list);
-        
-      } else {
-        socket.emit('error_message', 'Məlumatlar yanlışdır!');
-      }
-    } catch (err) {
-      socket.emit('error_message', 'Server xətası!');
-    }
-  });
+    socket.on('join_room', (data) => {
+        const { roomId, username } = data;
+        socket.join(roomId);
 
-  // 2. OTAQ YARATMAQ
-  socket.on('create_custom_room', (data) => {
-    const roomId = `room_${socket.id}`;
-    if (activeRooms.has(roomId)) activeRooms.delete(roomId);
+        if (!rooms[roomId]) {
+            rooms[roomId] = { 
+                players: [], 
+                totalBank: 0, 
+                turnIndex: 0, 
+                creator: username,
+                status: 'waiting'
+            };
+        }
 
-    const newRoom = {
-      id: roomId,
-      creator: data.username,
-      name: data.roomName,
-      players: [{ id: socket.id, username: data.username }],
-      maxPlayers: parseInt(data.maxPlayers) || 2,
-      status: 'waiting',
-      createdAt: Date.now()
-    };
+        if (rooms[roomId].players.length < 4) {
+            rooms[roomId].players.push({ 
+                username, 
+                id: socket.id, 
+                hand: [], 
+                score: 0, 
+                status: 'waiting' 
+            });
+        }
 
-    activeRooms.set(roomId, newRoom);
-    socket.join(roomId);
-    
-    socket.emit('room_created_success', {
-        id: newRoom.id,
-        players: newRoom.players,
-        name: newRoom.name,
-        creator: newRoom.creator,
-        maxPlayers: newRoom.maxPlayers
+        io.to(roomId).emit('player_joined', { players: rooms[roomId].players });
     });
 
-    broadcastRoomList();
-  });
+    socket.on('start_game_manual', (data) => {
+        const room = rooms[data.roomId];
+        if (room && room.creator === data.username) {
+            room.status = 'playing';
+            room.totalBank = room.players.length * 5; // Hərədən 5 AZN giriş pulu
+            shuffleAndDeal(room.players);
+            room.turnIndex = 0;
 
-  // 3. OTAĞA QOŞULMAQ
-  socket.on('join_custom_room', (data) => {
-    const room = activeRooms.get(data.roomId);
+            io.to(data.roomId).emit('battle_start', {
+                players: room.players,
+                totalBank: room.totalBank,
+                activePlayer: room.players[0].username
+            });
 
-    if (room) {
-      const isAlreadyIn = room.players.find(p => p.username === data.username);
-      if (room.players.length < room.maxPlayers && !isAlreadyIn) {
-        room.players.push({ id: socket.id, username: data.username });
-        socket.join(data.roomId);
-
-        // Qoşulan şəxsə məlumat
-        socket.emit('room_joined_success', {
-          room: room.id,
-          players: room.players,
-          name: room.name,
-          creator: room.creator,
-          maxPlayers: room.maxPlayers
-        });
-
-        // Otaqdakı digərlərinə məlumat
-        io.to(data.roomId).emit('player_joined', { players: room.players });
-        broadcastRoomList();
-      } else {
-        socket.emit('error_message', 'Otaq doludur və ya artıq daxildəsiniz!');
-      }
-    }
-  });
-
-  // 4. OYUNU BAŞLATMAQ (MANUAL)
-  socket.on('start_game_manual', (data) => {
-    const room = activeRooms.get(data.roomId);
-    if (room && room.players.length >= 2) {
-      const deck = createDeck();
-      
-      room.players.forEach((player) => {
-        player.hand = deck.splice(0, 3); // Hər oyunçuya 3 kart
-        player.score = calculateHandScore(player.hand); // Xalını serverdə hesablayırıq
-      });
-
-      room.status = 'playing';
-      io.to(data.roomId).emit('battle_start', {
-        roomId: room.id,
-        players: room.players, // Kartlar və xallar burada gedir
-        deckCount: deck.length
-      });
-    }
-  });
-
-  // 5. OTAQDAN ÇIXMAQ (DÜYMƏ İLƏ)
-  socket.on('leave_room', (data) => {
-    handleUserLeave(socket, data.roomId, data.username);
-  });
-
-  // 6. DISCONNECT (BAĞLANTI QOPANDA)
-  socket.on('disconnect', () => {
-    activeRooms.forEach((room, roomId) => {
-      const playerIndex = room.players.findIndex(p => p.id === socket.id);
-      if (playerIndex !== -1) {
-        const username = room.players[playerIndex].username;
-        handleUserLeave(socket, roomId, username);
-      }
+            startTurnTimer(data.roomId);
+        }
     });
-  });
+
+    socket.on('make_move', (data) => {
+        processMove(data.roomId, data.username, data.moveType);
+    });
+
+    socket.on('disconnect', () => {
+        console.log('Oyunçu ayrıldı.');
+        // Otaq təmizləmə məntiqi bura əlavə edilə bilər
+    });
 });
 
-// Çıxış Məntiqi - Təkrarlanmaması üçün tək funksiya
-function handleUserLeave(socket, roomId, username) {
-  const room = activeRooms.get(roomId);
-  if (room) {
-    room.players = room.players.filter(p => p.username !== username);
-    socket.leave(roomId);
-
-    // Əgər otağı yaradan çıxıbsa və ya otaq boşdursa - SİL
-    if (room.players.length === 0 || room.creator === username) {
-      activeRooms.delete(roomId);
-      console.log(`🗑️ Otaq silindi: ${roomId}`);
-    } else {
-      io.to(roomId).emit('player_left', { players: room.players });
-    }
-    broadcastRoomList();
-  }
-}
-
-function broadcastRoomList() {
-  const list = Array.from(activeRooms.values())
-    .filter(r => r.status === 'waiting')
-    .slice(0, 50);
-  io.emit('update_room_list', list);
-}
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🚀 Server ${PORT}-da aktivdir`));
+console.log('Server 3000 portunda işləyir...');
