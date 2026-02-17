@@ -7,13 +7,13 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
-  pingTimeout: 60000, // Bağlantı qopmalarına qarşı dözümlülük
+  pingTimeout: 60000,
 });
 
 // --- MONGODB ---
 const MONGO_URI = "mongodb+srv://teymurisbarov:123456Teymur@cluster0.1xrr77f.mongodb.net/ciyer_database?retryWrites=true&w=majority";
 mongoose.connect(MONGO_URI)
-  .then(() => console.log("✅ MongoDB-yə qoşulduq!"))
+  .then(() => console.log("✅ MongoDB Hazırdır"))
   .catch(err => console.error("❌ Baza xətası:", err));
 
 // --- USER MODEL ---
@@ -24,12 +24,11 @@ const User = mongoose.model('User', new mongoose.Schema({
   balance: { type: Number, default: 0 }
 }));
 
-// --- GLOBAL STATE (Yaddaşda otaq idarəetməsi) ---
-// Map massivdən (Array) çox daha sürətlidir və minlərlə otağı saniyələr içində emal edir.
+// --- GLOBAL STATE ---
 let activeRooms = new Map();
 
 io.on('connection', (socket) => {
-  console.log(`🟢 Yeni oyunçu qoşuldu: ${socket.id}`);
+  console.log(`🟢 Qoşuldu: ${socket.id}`);
 
   // 1. LOGIN
   socket.on('login', async (data) => {
@@ -45,10 +44,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 2. OTAQ YARATMAQ (Maksimum 10 nəfərlik)
+  // 2. OTAQ YARATMAQ
   socket.on('create_custom_room', (data) => {
     const roomId = `room_${socket.id}`;
-    
     if (activeRooms.has(roomId)) activeRooms.delete(roomId);
 
     const newRoom = {
@@ -56,7 +54,7 @@ io.on('connection', (socket) => {
       creator: data.username,
       name: data.roomName,
       players: [{ id: socket.id, username: data.username }],
-      maxPlayers: data.maxPlayers || 2,
+      maxPlayers: parseInt(data.maxPlayers) || 2,
       status: 'waiting',
       createdAt: Date.now()
     };
@@ -64,31 +62,28 @@ io.on('connection', (socket) => {
     activeRooms.set(roomId, newRoom);
     socket.join(roomId);
     
-    // Otaq yaradanın özünə xüsusi cavab göndəririk
     socket.emit('room_created_success', {
-        room: newRoom.id,
+        id: newRoom.id,
         players: newRoom.players,
-        name: newRoom.name
+        name: newRoom.name,
+        creator: newRoom.creator,
+        maxPlayers: newRoom.maxPlayers
     });
 
     broadcastRoomList();
   });
 
-  // 3. AKTİV OTAQLARI İSTƏMƏK
-  socket.on('get_active_rooms', () => {
-    broadcastRoomList();
-  });
-
-  // 4. OTAĞA QOŞULMAQ
+  // 3. OTAĞA QOŞULMAQ
   socket.on('join_custom_room', (data) => {
     const room = activeRooms.get(data.roomId);
 
     if (room) {
-      if (room.players.length < room.maxPlayers) {
+      const isAlreadyIn = room.players.find(p => p.username === data.username);
+      if (room.players.length < room.maxPlayers && !isAlreadyIn) {
         room.players.push({ id: socket.id, username: data.username });
         socket.join(data.roomId);
 
-        // 1. Qoşulan şəxsə (özünə) mesaj göndər ki, ekranı dəyişsin
+        // Qoşulan şəxsə məlumat
         socket.emit('room_joined_success', {
           room: room.id,
           players: room.players,
@@ -97,51 +92,69 @@ io.on('connection', (socket) => {
           maxPlayers: room.maxPlayers
         });
 
-        // 2. Otaqda artıq gözləyənə (sahibinə) xəbər ver ki, kimsə gəldi
-        io.to(data.roomId).emit('player_joined', {
-          players: room.players,
-          count: room.players.length
-        });
-
+        // Otaqdakı digərlərinə məlumat
+        io.to(data.roomId).emit('player_joined', { players: room.players });
         broadcastRoomList();
       } else {
-        socket.emit('error_message', 'Otaq doludur!');
+        socket.emit('error_message', 'Otaq doludur və ya artıq daxildəsiniz!');
       }
     }
   });
 
-  // 5. BAĞLANTI KƏSİLDİKDƏ (DISCONNECT)
+  // 4. OYUNU BAŞLATMAQ (MANUAL)
+  socket.on('start_game_manual', (data) => {
+    const room = activeRooms.get(data.roomId);
+    if (room && room.creator === data.username && room.players.length >= 2) {
+      room.status = 'playing'; // Artıq lobby-də görsənməyəcək
+      io.to(data.roomId).emit('battle_start', {
+        room: room.id,
+        players: room.players
+      });
+      broadcastRoomList();
+    }
+  });
+
+  // 5. OTAQDAN ÇIXMAQ (DÜYMƏ İLƏ)
+  socket.on('leave_room', (data) => {
+    handleUserLeave(socket, data.roomId, data.username);
+  });
+
+  // 6. DISCONNECT (BAĞLANTI QOPANDA)
   socket.on('disconnect', () => {
-    console.log(`🔴 Oyunçu ayrıldı: ${socket.id}`);
-    
     activeRooms.forEach((room, roomId) => {
-      // Oyunçunu otaqdan çıxarırıq
       const playerIndex = room.players.findIndex(p => p.id === socket.id);
-      
       if (playerIndex !== -1) {
-        room.players.splice(playerIndex, 1);
-        
-        // Əgər otaqda kimsə qalmayıbsa, otağı Map-dan silirik (RAM təmizliyi)
-        if (room.players.length === 0) {
-          activeRooms.delete(roomId);
-          console.log(`🗑️ Boş otaq silindi: ${roomId}`);
-        } else {
-          // Otaqda qalanlara xəbər veririk
-          io.to(roomId).emit('player_left', { players: room.players });
-        }
-        broadcastRoomList();
+        const username = room.players[playerIndex].username;
+        handleUserLeave(socket, roomId, username);
       }
     });
   });
 });
 
-// Performans üçün otaq siyahısını hamıya göndərən köməkçi funksiya
+// Çıxış Məntiqi - Təkrarlanmaması üçün tək funksiya
+function handleUserLeave(socket, roomId, username) {
+  const room = activeRooms.get(roomId);
+  if (room) {
+    room.players = room.players.filter(p => p.username !== username);
+    socket.leave(roomId);
+
+    // Əgər otağı yaradan çıxıbsa və ya otaq boşdursa - SİL
+    if (room.players.length === 0 || room.creator === username) {
+      activeRooms.delete(roomId);
+      console.log(`🗑️ Otaq silindi: ${roomId}`);
+    } else {
+      io.to(roomId).emit('player_left', { players: room.players });
+    }
+    broadcastRoomList();
+  }
+}
+
 function broadcastRoomList() {
   const list = Array.from(activeRooms.values())
     .filter(r => r.status === 'waiting')
-    .slice(0, 50); // İlk 50 aktiv otağı göndəririk ki, trafik şişməsin
+    .slice(0, 50);
   io.emit('update_room_list', list);
 }
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🚀 Server ${PORT} portunda aktivdir!`));
+server.listen(PORT, () => console.log(`🚀 Server ${PORT}-da aktivdir`));
