@@ -102,29 +102,56 @@ io.on('connection', (socket) => {
 
   // 5. OTAĞA QOŞULMAQ
   socket.on('join_custom_room', (data) => {
-    const roomIndex = activeRooms.findIndex(r => r.id === data.roomId);
-    const room = activeRooms[roomIndex];
+    const room = activeRooms.find(r => r.id === data.roomId);
 
-    if (room && room.players.length < 2) {
-      room.players.push(data.username);
-      room.status = 'playing';
-      socket.join(data.roomId);
-      
-      console.log(`🚀 ${data.username} otağa qoşuldu: ${room.id}`);
-
-      // Oyunu başladırıq
-      io.to(data.roomId).emit('battle_start', {
-        room: room.id,
-        players: room.players,
-        turn: room.players[0] // İlk gediş kimdədir (nümunə üçün)
-      });
-      
-      // Otaq dolduğu üçün siyahıdan çıxarırıq (digərləri görməsin)
-      io.emit('update_room_list', activeRooms.filter(r => r.status === 'waiting'));
-    } else {
-      socket.emit('error_message', 'Otaq doludur və ya tapılmadı!');
+    if (!room) {
+        return socket.emit('error_message', 'Otaq tapılmadı!');
     }
-  });
+
+    // Əgər oyunçu artıq bu otaqdadırsa, yenidən qoşulmasına icazə ver (səhvən qoşulma halı üçün)
+    const isAlreadyIn = room.players.includes(data.username);
+
+    if (room.players.length < 2 || isAlreadyIn) {
+        if (!isAlreadyIn) {
+            room.players.push(data.username);
+        }
+        
+        room.status = (room.players.length === 2) ? 'playing' : 'waiting';
+        socket.join(data.roomId);
+        
+        console.log(`🚀 ${data.username} otağa girdi. Say: ${room.players.length}`);
+
+        if (room.players.length === 2) {
+            io.to(data.roomId).emit('battle_start', {
+                room: room.id,
+                players: room.players
+            });
+        }
+        
+        io.emit('update_room_list', activeRooms.filter(r => r.status === 'waiting'));
+    } else {
+        socket.emit('error_message', 'Otaq artıq doludur!');
+    }
+});
+
+// 2. Çıxış (Disconnect) - Ən vacib hissə
+socket.on('disconnect', () => {
+    console.log("🔴 Oyunçu ayrıldı:", socket.id);
+    
+    // Oyunçu otaq yaradan idisə və ya otaqdadırsa, otağı təmizlə
+    // Bu, otaqların "ilişib qalmasının" qarşısını alır
+    activeRooms = activeRooms.filter(room => {
+        const isCreator = room.id === `room_${socket.id}`;
+        // Əgər otaq yaradan çıxıbsa, otağı ləğv et
+        if (isCreator) {
+            console.log(`🗑️ Otaq silindi: ${room.name}`);
+            return false;
+        }
+        return true;
+    });
+
+    io.emit('update_room_list', activeRooms.filter(r => r.status === 'waiting'));
+});
 
   // 6. KART OYUNU ÜÇÜN HADİSƏLƏR (MƏLUMAT ÖTÜRMƏ)
   socket.on('play_card', (data) => {
