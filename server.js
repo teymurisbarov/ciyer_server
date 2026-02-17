@@ -19,7 +19,8 @@ function shuffleAndDeal(players) {
     let deck = [];
     suits.forEach(suit => {
         values.forEach(val => {
-            deck.push({ suit, value: val.v, score: val.s });
+            // Hər bir kart obyektinin tam olduğundan əmin oluruq
+            deck.push({ suit: suit, value: val.v, score: val.s });
         });
     });
 
@@ -29,11 +30,12 @@ function shuffleAndDeal(players) {
         [deck[i], deck[j]] = [deck[j], deck[i]];
     }
 
-    // Payla (Hərəsinə 3 kart)
     players.forEach(p => {
+        // Kartları paylamazdan əvvəl massivi təmizləyirik
         p.hand = [deck.pop(), deck.pop(), deck.pop()];
+        // Diqqət: calculateSekaScore funksiyası p.hand-i düzgün oxumalıdır
         p.score = calculateSekaScore(p.hand);
-        p.status = 'active'; // 'active', 'pass', 'folded'
+        p.status = 'active';
     });
 }
 
@@ -150,22 +152,29 @@ io.on('connection', (socket) => {
     });
 
     socket.on('start_game_manual', (data) => {
-        const room = rooms[data.roomId];
-        if (room && room.creator === data.username) {
-            room.status = 'playing';
-            room.totalBank = room.players.length * 5; // Hərədən 5 AZN giriş pulu
-            shuffleAndDeal(room.players);
-            room.turnIndex = 0;
+    const room = rooms[data.roomId];
+    if (room && room.creator === data.username) {
+        console.log("Oyun başladılır..."); // Terminalda bunu görməlisən
+        room.status = 'playing';
+        room.totalBank = room.players.length * 5;
+        
+        shuffleAndDeal(room.players);
+        room.turnIndex = 0;
 
-            io.to(data.roomId).emit('battle_start', {
-                players: room.players,
-                totalBank: room.totalBank,
-                activePlayer: room.players[0].username
-            });
+        const startData = {
+            players: room.players,
+            totalBank: room.totalBank,
+            activePlayer: room.players[0].username
+        };
 
-            startTurnTimer(data.roomId);
-        }
-    });
+        console.log("Göndərilən məlumat:", startData); // Kartların dolu olduğunu yoxla
+        io.to(data.roomId).emit('battle_start', startData);
+
+        startTurnTimer(data.roomId);
+    } else {
+        console.log("Oyun başlada bilmədi: Creator deyil və ya otaq yoxdur.");
+    }
+});
 
     socket.on('make_move', (data) => {
         processMove(data.roomId, data.username, data.moveType);
