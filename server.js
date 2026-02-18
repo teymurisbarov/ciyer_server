@@ -180,13 +180,6 @@ io.on('connection', (socket) => {
 
     // 2. Yaradanı socket kanalına qoş
     socket.join(roomId);
-    rooms[roomId].players.push({
-        username: data.username,
-        id: socket.id,
-        status: 'waiting',
-        hand: [],
-        score: 0
-    }); 
 
     // 3. Yaradanı oyunçu siyahısına əlavə et
     const creatorPlayer = {
