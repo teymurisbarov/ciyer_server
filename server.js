@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 const http = require('http');
-
 // 1. RENDER ÜÇÜN PORT VƏ SERVER AYARLARI
 const PORT = process.env.PORT || 3000; 
 
