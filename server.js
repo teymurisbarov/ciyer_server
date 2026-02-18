@@ -165,8 +165,6 @@ io.on('connection', (socket) => {
 
     socket.on('create_custom_room', (data) => {
     const roomId = "room_" + Date.now();
-    
-    // 1. Otaq obyektini yarat
     rooms[roomId] = {
         id: roomId,
         name: data.roomName,
@@ -175,11 +173,20 @@ io.on('connection', (socket) => {
         maxPlayers: parseInt(data.maxPlayers) || 2,
         totalBank: 0,
         status: 'waiting',
-        lastBet: 0.20
+        lastBet: 0.20, // Başlanğıc mərcləri 0.20-dən başlayır
+        turnIndex: 0,
+        startTimerActive: false
     };
 
     // 2. Yaradanı socket kanalına qoş
-    socket.join(roomId); 
+    socket.join(roomId);
+    rooms[roomId].players.push({
+        username: data.username,
+        id: socket.id,
+        status: 'waiting',
+        hand: [],
+        score: 0
+    }); 
 
     // 3. Yaradanı oyunçu siyahısına əlavə et
     const creatorPlayer = {
@@ -246,43 +253,47 @@ io.on('connection', (socket) => {
 });
 
     socket.on('enter_round', async (data) => {
-        const room = rooms[data.roomId];
-        if (!room) return;
-        const player = room.players.find(p => p.username === data.username);
+    const room = rooms[data.roomId];
+    if (!room) return;
+    const player = room.players.find(p => p.username === data.username);
 
-        if (player && player.status === 'waiting') {
-            const currentDbUser = await User.findOne({ username: data.username });
-            if (currentDbUser.balance < 0.50) {
-                socket.emit('error_message', 'Balansınız kifayət deyil!');
-                return;
-            }
-
-            const newBal = await updateDbBalance(data.username, -0.50);
-            player.status = 'ready';
-            room.totalBank = parseFloat((room.totalBank + 0.50).toFixed(2));
-
-            io.to(data.roomId).emit('update_players', {
-                players: room.players,
-                totalBank: room.totalBank,
-                username: data.username,
-                newBalance: newBal
-            });
-
-            const readyPlayers = room.players.filter(p => p.status === 'ready');
-            if (readyPlayers.length >= 2 && !room.startTimerActive) {
-                room.startTimerActive = true;
-                let timeLeft = 10;
-                const countdown = setInterval(() => {
-                    io.to(data.roomId).emit('start_countdown', { timeLeft });
-                    timeLeft--;
-                    if (timeLeft < 0) {
-                        clearInterval(countdown);
-                        startSekaRound(data.roomId);
-                    }
-                }, 1000);
-            }
+    if (player && player.status === 'waiting') {
+        const currentDbUser = await User.findOne({ username: data.username });
+        
+        // Yoxlama: Balans 0.20-dən azdırsa icazə vermə
+        if (currentDbUser.balance < 0.20) {
+            socket.emit('error_message', 'Balansınızda kifayət qədər vəsait yoxdur (Min: 0.20 AZN)!');
+            return;
         }
-    });
+
+        // Balansdan 0.20 çıxılır
+        const newBal = await updateDbBalance(data.username, -0.20);
+        player.status = 'ready';
+        room.totalBank = parseFloat((room.totalBank + 0.20).toFixed(2));
+
+        io.to(data.roomId).emit('update_players', {
+            players: room.players,
+            totalBank: room.totalBank,
+            username: data.username,
+            newBalance: newBal
+        });
+
+        // Oyunun başlama məntiqi (2 nəfər hazır olanda)
+        const readyPlayers = room.players.filter(p => p.status === 'ready');
+        if (readyPlayers.length >= 2 && !room.startTimerActive) {
+            room.startTimerActive = true;
+            let timeLeft = 10;
+            const countdown = setInterval(() => {
+                io.to(data.roomId).emit('start_countdown', { timeLeft });
+                timeLeft--;
+                if (timeLeft < 0) {
+                    clearInterval(countdown);
+                    startSekaRound(data.roomId);
+                }
+            }, 1000);
+        }
+    }
+});
 
     socket.on('make_move', async (data) => {
         const room = rooms[data.roomId];
