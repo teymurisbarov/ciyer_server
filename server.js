@@ -113,18 +113,34 @@ async function finishGame(roomId, winnerData = null) {
 // --- SOCKET HADİSƏLƏRİ ---
 io.on('connection', (socket) => {
 
-    socket.on('join_room', async (data) => {
+ socket.on('join_room', async (data) => {
+    console.log("Giriş cəhdi:", data.username);
     try {
-        let user = await User.findOne({ username: data.username });
-        if (!user) {
-            // BURADA await ƏLAVƏ EDİLDİ
-            user = await User.create({ username: data.username, balance: 1000 });
-            console.log("Yeni istifadəçi yaradıldı:", user.username);
+        // Əgər MongoDB-yə hələ də qoşulmayıbsa, tətbiqə xəbər ver
+        if (mongoose.connection.readyState !== 1) {
+            console.log("❌ Baza hələ hazır deyil!");
+            return socket.emit('error_message', 'Baza bağlantısı qurulur, bir az sonra yenidən yoxlayın.');
         }
+
+        // İstifadəçini bazada axtar
+        let user = await User.findOne({ username: data.username });
+
+        if (!user) {
+            console.log("👤 Yeni istifadəçi yaradılır...");
+            user = await User.create({ 
+                username: data.username, 
+                balance: 1000 
+            });
+            console.log("✅ Yeni istifadəçi bazaya yazıldı!");
+        }
+
         socket.emit('login_confirmed', user);
         broadcastRoomList();
+        console.log("🚀 Giriş uğurlu:", user.username);
+
     } catch (err) {
-        console.error("Giriş xətası:", err);
+        console.error("❗ Giriş xətası detalı:", err);
+        socket.emit('error_message', 'Giriş zamanı xəta baş verdi.');
     }
 });
 
