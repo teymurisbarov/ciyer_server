@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 
 // --- MONGODB BAĞLANTISI ---
 // 'seka_game' adlı verilənlər bazasına bağlanır
-mongoose.connect('mongodb://localhost:27017/seka_game')
+mongoose.connect('mongodb+srv://teymurisbarov:<db_password>@cluster0.1xrr77f.mongodb.net/?appName=Cluster0')
     .then(() => console.log("MongoDB-yə uğurla bağlanıldı"))
     .catch(err => console.error("MongoDB xətası:", err));
 
@@ -114,13 +114,19 @@ async function finishGame(roomId, winnerData = null) {
 io.on('connection', (socket) => {
 
     socket.on('join_room', async (data) => {
+    try {
         let user = await User.findOne({ username: data.username });
         if (!user) {
+            // BURADA await ƏLAVƏ EDİLDİ
             user = await User.create({ username: data.username, balance: 1000 });
+            console.log("Yeni istifadəçi yaradıldı:", user.username);
         }
         socket.emit('login_confirmed', user);
         broadcastRoomList();
-    });
+    } catch (err) {
+        console.error("Giriş xətası:", err);
+    }
+});
 
     socket.on('create_custom_room', (data) => {
         const roomId = "room_" + Date.now();
