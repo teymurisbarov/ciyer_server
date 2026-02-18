@@ -158,6 +158,14 @@ io.on('connection', (socket) => {
             lastBet: 0.20,
             status: 'waiting'
         };
+        const roomList = Object.values(rooms).map(r => ({
+    id: r.id, 
+    name: r.name, 
+    players: r.players.length, 
+    maxPlayers: r.maxPlayers, 
+    status: r.status
+}));
+io.emit('update_room_list', roomList);
         socket.join(roomId);
         socket.emit('room_created_success', rooms[roomId]);
     });
