@@ -50,7 +50,7 @@ function broadcastRoomList() {
         id: r.id,
         name: r.name,
         playersCount: r.players.length,
-        maxPlayers: 4, // Maksimum limit
+        maxPlayers: r.maxPlayers, // Otağın öz limitini göndər
         status: r.status
     }));
     io.emit('update_room_list', list);
@@ -164,37 +164,39 @@ io.on('connection', (socket) => {
     });
 
     socket.on('create_custom_room', (data) => {
-        const roomId = "room_" + Date.now();
-        rooms[roomId] = {
-            id: roomId,
-            name: data.roomName,
-            creator: data.username,
-            players: [],
-            totalBank: 0,
-            status: 'waiting',
-            lastBet: 0.20,
-            turnIndex: 0,
-            startTimerActive: false
-        };
+    const roomId = "room_" + Date.now();
+    rooms[roomId] = {
+        id: roomId,
+        name: data.roomName,
+        creator: data.username,
+        players: [], 
+        maxPlayers: data.maxPlayers || 4, // Limiti burda saxlayırıq
+        totalBank: 0,
+        status: 'waiting',
+        lastBet: 0.20
+    };
         socket.emit('room_created_success', rooms[roomId]);
-        broadcastRoomList();
-    });
+    broadcastRoomList(); // İndi 1/4 (və ya 1/2) görsənəcək
+});
 
     socket.on('join_custom_room', (data) => {
-        const room = rooms[data.roomId];
-        
-        // Otaq mövcuddursa və hələ başlamayıbsa
-        if (room && room.status === 'waiting') {
-            
-            // OYUNÇU LİMİTİ YOXLANILIR (Məsələn: 4 nəfər)
-            if (room.players.length >= 4) {
-                socket.emit('error_message', 'Bu otaq artıq doludur!');
-                return;
-            }
-
+    const room = rooms[data.roomId];
+    if (room && room.status === 'waiting') {
+        if (room.players.length >= room.maxPlayers) {
+            socket.emit('error_message', 'Otaq doludur!');
+            return;
+        }
             // Socket-i otaq kanalına əlavə edirik
             socket.join(data.roomId);
-
+        if (!room.players.find(p => p.username === data.username)) {
+            room.players.push({
+                username: data.username,
+                id: socket.id,
+                status: 'waiting',
+                hand: [],
+                score: 0
+            });
+        } 
             // Oyunçu artıq siyahıda yoxdursa əlavə et
             const existingPlayer = room.players.find(p => p.username === data.username);
             if (!existingPlayer) {
@@ -215,7 +217,7 @@ io.on('connection', (socket) => {
             });
 
             // Ümumi otaq siyahısını (Lobby-dəkilər üçün) yeniləyirik
-            broadcastRoomList();
+            broadcastRoomList(); // Lobby-də say yenilənsin (məs: 2/4)
         } else {
             socket.emit('error_message', 'Otaq tapılmadı və ya oyun artıq başlayıb.');
         }
