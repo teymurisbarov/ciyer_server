@@ -5,9 +5,12 @@ const mongoose = require('mongoose');
 
 // --- MONGODB BAĞLANTISI ---
 // 'seka_game' adlı verilənlər bazasına bağlanır
-mongoose.connect('mongodb+srv://teymurisbarov:123456@cluster0.1xrr77f.mongodb.net/seka_game?retryWrites=true&w=majority')
+mongoose.connect('mongodb+srv://teymurisbarov:1234567@cluster0.1xrr77f.mongodb.net/seka_game')
     .then(() => console.log("✅ MongoDB-yə uğurla bağlanıldı"))
-    .catch(err => console.error("❌ MongoDB bağlantı xətası:", err));
+    .catch(err => {
+        console.error("❌ MongoDB bağlantı xətası!");
+        console.error("Xəta mesajı:", err.message);
+    });
 
 // İstifadəçi Modeli
 const UserSchema = new mongoose.Schema({
