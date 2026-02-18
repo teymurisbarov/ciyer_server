@@ -114,33 +114,29 @@ async function finishGame(roomId, winnerData = null) {
 io.on('connection', (socket) => {
 
  socket.on('join_room', async (data) => {
-    console.log("Giriş cəhdi:", data.username);
+    console.log("Giriş cəhdi gəldi:", data.username);
+    
+    // 5 saniyə ərzində baza cavab verməsə, fırlanmanı dayandır
+    const timeout = setTimeout(() => {
+        socket.emit('error_message', 'Baza bağlantısı çox gecikir. İnterneti və IP icazəsini yoxlayın.');
+    }, 5000);
+
     try {
-        // Əgər MongoDB-yə hələ də qoşulmayıbsa, tətbiqə xəbər ver
-        if (mongoose.connection.readyState !== 1) {
-            console.log("❌ Baza hələ hazır deyil!");
-            return socket.emit('error_message', 'Baza bağlantısı qurulur, bir az sonra yenidən yoxlayın.');
-        }
-
-        // İstifadəçini bazada axtar
         let user = await User.findOne({ username: data.username });
-
         if (!user) {
-            console.log("👤 Yeni istifadəçi yaradılır...");
-            user = await User.create({ 
-                username: data.username, 
-                balance: 1000 
-            });
-            console.log("✅ Yeni istifadəçi bazaya yazıldı!");
+            user = await User.create({ username: data.username, balance: 1000 });
+            console.log("Yeni istifadəçi yaradıldı:", user.username);
         }
-
+        
+        clearTimeout(timeout); // Uğurlu olsa timeout-u ləğv et
         socket.emit('login_confirmed', user);
         broadcastRoomList();
-        console.log("🚀 Giriş uğurlu:", user.username);
+        console.log("Giriş uğurludur!");
 
     } catch (err) {
-        console.error("❗ Giriş xətası detalı:", err);
-        socket.emit('error_message', 'Giriş zamanı xəta baş verdi.');
+        clearTimeout(timeout);
+        console.error("Giriş xətası:", err.message);
+        socket.emit('error_message', 'Sistem xətası: ' + err.message);
     }
 });
 
