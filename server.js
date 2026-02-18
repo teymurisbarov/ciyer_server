@@ -4,9 +4,9 @@ const io = require('socket.io')(3000, {
 
 let rooms = {}; 
 let turnTimers = {}; 
+let users = []; // Qeydiyyatdan keçən istifadəçiləri burada saxlayaq
 
-// --- 1. SEKA OYUN MƏNTİQİ (Sənin yazdığın funksiyalar) ---
-
+// --- 1. SEKA OYUN MƏNTİQİ ---
 function shuffleAndDeal(players) {
     const suits = ['Hearts', 'Spades', 'Clubs', 'Diamonds'];
     const values = [
@@ -14,19 +14,12 @@ function shuffleAndDeal(players) {
         { v: '9', s: 9 }, { v: '10', s: 10 }, { v: 'B', s: 10 }, 
         { v: 'D', s: 10 }, { v: 'K', s: 10 }, { v: 'T', s: 11 }
     ];
-    
     let deck = [];
-    suits.forEach(suit => {
-        values.forEach(val => {
-            deck.push({ suit: suit, value: val.v, score: val.s });
-        });
-    });
-
+    suits.forEach(suit => values.forEach(val => deck.push({ suit, value: val.v, score: val.s })));
     for (let i = deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [deck[i], deck[j]] = [deck[j], deck[i]];
     }
-
     players.forEach(p => {
         p.hand = [deck.pop(), deck.pop(), deck.pop()];
         p.score = calculateSekaScore(p.hand);
@@ -38,32 +31,22 @@ function calculateSekaScore(hand) {
     const tuses = hand.filter(c => c.value === 'T');
     if (tuses.length === 3) return 33;
     if (tuses.length === 2) return 22;
-
     const suits = ['Hearts', 'Spades', 'Clubs', 'Diamonds'];
     let maxScore = 0;
     suits.forEach(s => {
         const suitSum = hand.filter(c => c.suit === s).reduce((sum, c) => sum + c.score, 0);
         if (suitSum > maxScore) maxScore = suitSum;
     });
-    
-    const valGroup = hand[0].value === hand[1].value && hand[1].value === hand[2].value;
-    if (valGroup) {
-        const tripleScore = hand[0].value === '6' ? 32 : (hand[0].score * 3);
-        if (tripleScore > maxScore) maxScore = tripleScore;
-    }
     return maxScore;
 }
 
-// --- 2. TAYMER VƏ HƏRƏKƏT İDARƏSİ ---
-
+// --- 2. TAYMER VƏ HƏRƏKƏT ---
 function startTurnTimer(roomId) {
     const room = rooms[roomId];
     if (!room) return;
     if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
-
     const activePlayer = room.players[room.turnIndex];
     turnTimers[roomId] = setTimeout(() => {
-        console.log(`Vaxt bitdi: ${activePlayer.username}`);
         processMove(roomId, activePlayer.username, 'pass');
     }, 30000); 
 }
@@ -71,15 +54,11 @@ function startTurnTimer(roomId) {
 function processMove(roomId, username, moveType) {
     const room = rooms[roomId];
     if (!room) return;
-
     const player = room.players.find(p => p.username === username);
     if (!player || room.players[room.turnIndex].username !== username) return;
 
-    if (moveType === 'pass') {
-        player.status = 'pass';
-    } else if (moveType === 'raise') {
-        room.totalBank += 10;
-    }
+    if (moveType === 'pass') player.status = 'pass';
+    else if (moveType === 'raise') room.totalBank += 10;
 
     let nextIndex = (room.turnIndex + 1) % room.players.length;
     while (room.players[nextIndex].status === 'pass' && room.players.filter(p => p.status === 'active').length > 1) {
@@ -102,18 +81,30 @@ function processMove(roomId, username, moveType) {
     }
 }
 
-// --- 3. SOCKET BAĞLANTISI (Login və Lobby Birləşdirildi) ---
-
+// --- 3. SOCKET BAĞLANTISI ---
 io.on('connection', (socket) => {
     console.log('Yeni qoşulma:', socket.id);
 
-    // Login hadisəsi
-    socket.on('join_room', (data) => {
+    // QEYDİYYAT (Signup)
+    socket.on('signup', (data) => {
+        const { username, email, password } = data;
+        const userExists = users.find(u => u.email === email);
+        if (userExists) {
+            socket.emit('signup_error', { message: "Bu email artıq mövcuddur!" });
+        } else {
+            const newUser = { username, email, password, balance: 1000 };
+            users.push(newUser);
+            console.log(`Yeni istifadəçi: ${username}`);
+            socket.emit('signup_success', { message: "Qeydiyyat uğurludur!" });
+        }
+    });
+
+    // GİRİŞ (Login)
+    socket.on('join_room', (data) => { // Tətbiqdə handleLogin bunu çağırır
         const { username } = data;
-        console.log(`Giriş: ${username}`);
+        // Əgər istifadəçi users massivində yoxdursa belə, girişi təsdiqləyirik (test üçün)
         socket.emit('login_confirmed', { username, balance: 1000 });
         
-        // Mövcud otaqları göndər
         const roomList = Object.values(rooms).map(r => ({
             id: r.id, name: r.name, players: r.players, maxPlayers: r.maxPlayers
         }));
@@ -150,7 +141,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Oyunu başlatmaq
     socket.on('start_game_manual', (data) => {
         const room = rooms[data.roomId];
         if (room && room.creator === data.username) {
@@ -168,13 +158,9 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('make_move', (data) => {
-        processMove(data.roomId, data.username, data.moveType);
-    });
+    socket.on('make_move', (data) => processMove(data.roomId, data.username, data.moveType));
 
-    socket.on('disconnect', () => {
-        console.log('Oyunçu ayrıldı');
-    });
+    socket.on('disconnect', () => console.log('Oyunçu ayrıldı'));
 });
 
 console.log('Seka Server 3000 portunda aktivdir...');
