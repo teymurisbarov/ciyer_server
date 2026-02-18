@@ -251,7 +251,16 @@ io.on('connection', (socket) => {
         socket.emit('error_message', 'Otaq tapılmadı!');
     }
 });
-
+socket.on('get_user_data', async (data) => {
+    try {
+        const user = await User.findOne({ username: data.username });
+        if (user) {
+            socket.emit('user_data_res', user);
+        }
+    } catch (err) {
+        console.error("İstifadəçi datası çəkilərkən xəta:", err);
+    }
+});
     socket.on('enter_round', async (data) => {
     const room = rooms[data.roomId];
     if (!room) return;
