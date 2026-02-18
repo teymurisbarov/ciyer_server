@@ -50,6 +50,7 @@ function broadcastRoomList() {
         id: r.id,
         name: r.name,
         playersCount: r.players.length,
+        maxPlayers: 4, // Maksimum limit
         status: r.status
     }));
     io.emit('update_room_list', list);
@@ -181,18 +182,42 @@ io.on('connection', (socket) => {
 
     socket.on('join_custom_room', (data) => {
         const room = rooms[data.roomId];
+        
+        // Otaq mövcuddursa və hələ başlamayıbsa
         if (room && room.status === 'waiting') {
+            
+            // OYUNÇU LİMİTİ YOXLANILIR (Məsələn: 4 nəfər)
+            if (room.players.length >= 4) {
+                socket.emit('error_message', 'Bu otaq artıq doludur!');
+                return;
+            }
+
+            // Socket-i otaq kanalına əlavə edirik
             socket.join(data.roomId);
-            if (!room.players.find(p => p.username === data.username)) {
+
+            // Oyunçu artıq siyahıda yoxdursa əlavə et
+            const existingPlayer = room.players.find(p => p.username === data.username);
+            if (!existingPlayer) {
                 room.players.push({
-                    username: data.username, 
+                    username: data.username,
                     id: socket.id,
-                    status: 'waiting', 
-                    hand: [], 
+                    status: 'waiting',
+                    hand: [],
                     score: 0
                 });
+                console.log(`${data.username} otağa (${room.name}) qoşuldu.`);
             }
-            io.to(data.roomId).emit('player_joined', { players: room.players });
+
+            // Otaqdakı HƏR KƏSƏ (həm qoşulana, həm ordakılara) yeni siyahını göndər
+            io.to(data.roomId).emit('player_joined', { 
+                players: room.players,
+                maxPlayers: 4 // Limiti frontend-ə də bildiririk
+            });
+
+            // Ümumi otaq siyahısını (Lobby-dəkilər üçün) yeniləyirik
+            broadcastRoomList();
+        } else {
+            socket.emit('error_message', 'Otaq tapılmadı və ya oyun artıq başlayıb.');
         }
     });
 
