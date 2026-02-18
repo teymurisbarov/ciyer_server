@@ -1,14 +1,18 @@
 const mongoose = require('mongoose');
 const http = require('http');
 
-// 1. Render üçün dinamik PORT
+// 1. Render üçün PORT (Mütləq belə olmalıdır)
 const PORT = process.env.PORT || 3000; 
 
-// 2. HTTP Server və Socket.io yaradılması
-const server = http.createServer();
+// 2. HTTP Server və Socket.io yaradılması (TƏK BİR DƏFƏ)
+const server = http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end("Server is running");
+});
+
 const io = require('socket.io')(server, {
     cors: { origin: "*" },
-    transports: ['websocket', 'polling'] // Render üçün daha stabil bağlantı
+    transports: ['websocket', 'polling']
 });
 
 // --- MONGODB BAĞLANTISI ---
@@ -26,7 +30,6 @@ const UserSchema = new mongoose.Schema({
 const User = mongoose.model('User', UserSchema);
 
 let rooms = {};
-let turnTimers = {};
 
 // --- KÖMƏKÇİ FUNKSİYALAR ---
 
@@ -121,14 +124,19 @@ async function finishGame(roomId, winnerData = null) {
 
 // --- SOCKET HADİSƏLƏRİ ---
 io.on('connection', (socket) => {
-    console.log("Yeni qoşulma:", socket.id);
+    console.log("Yeni istifadəçi qoşuldu:", socket.id);
 
     socket.on('join_room', async (data) => {
-        console.log("Giriş cəhdi gəldi:", data.username);
-        
-        const timeout = setTimeout(() => {
-            socket.emit('error_message', 'Baza bağlantısı gecikir. Atlas IP icazəsini yoxlayın.');
-        }, 5000);
+        try {
+            let user = await User.findOne({ username: data.username });
+            if (!user) {
+                user = await User.create({ username: data.username, balance: 1000 });
+            }
+            socket.emit('login_confirmed', user);
+            console.log("Giriş uğurlu:", data.username);
+        } catch (err) {
+            socket.emit('error_message', 'Baza xətası: ' + err.message);
+        }
 
         try {
             let user = await User.findOne({ username: data.username });
@@ -255,6 +263,6 @@ function startSekaRound(roomId) {
     });
 }
 
-server.listen(PORT, () => {
-    console.log(`🚀 Seka Server ${PORT} portunda aktivdir...`);
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server ${PORT} portunda aktivdir və Render tərəfindən dinlənilir...`);
 });
