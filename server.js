@@ -5,12 +5,20 @@ const mongoose = require('mongoose');
 
 // --- MONGODB BAĞLANTISI ---
 // 'seka_game' adlı verilənlər bazasına bağlanır
-mongoose.connect('mongodb+srv://teymurisbarov:1234567@cluster0.1xrr77f.mongodb.net/seka_game')
+const uri = "mongodb+srv://admin:123@cluster0.1xrr77f.mongodb.net/seka_game?retryWrites=true&w=majority";
+
+mongoose.connect(uri)
     .then(() => console.log("✅ MongoDB-yə uğurla bağlanıldı"))
-    .catch(err => {
-        console.error("❌ MongoDB bağlantı xətası!");
-        console.error("Xəta mesajı:", err.message);
-    });
+    .catch(err => console.error("❌ MongoDB bağlantı xətası:", err.message));
+
+// 2. Render üçün PORT hissəsini belə yaz:
+const PORT = process.env.PORT || 3000; 
+
+// 3. io-nu belə başladın:
+const server = require('http').createServer();
+const io = require('socket.io')(server, {
+    cors: { origin: "*" }
+});
 
 // İstifadəçi Modeli
 const UserSchema = new mongoose.Schema({
