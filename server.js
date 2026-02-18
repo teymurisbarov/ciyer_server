@@ -1,29 +1,27 @@
-const io = require('socket.io')(3000, {
-    cors: { origin: "*" }
-});
 const mongoose = require('mongoose');
+const http = require('http');
+
+// 1. Render üçün dinamik PORT
+const PORT = process.env.PORT || 3000; 
+
+// 2. HTTP Server və Socket.io yaradılması
+const server = http.createServer();
+const io = require('socket.io')(server, {
+    cors: { origin: "*" },
+    transports: ['websocket', 'polling'] // Render üçün daha stabil bağlantı
+});
 
 // --- MONGODB BAĞLANTISI ---
-// 'seka_game' adlı verilənlər bazasına bağlanır
 const uri = "mongodb+srv://admin:123@cluster0.1xrr77f.mongodb.net/seka_game?retryWrites=true&w=majority";
 
 mongoose.connect(uri)
     .then(() => console.log("✅ MongoDB-yə uğurla bağlanıldı"))
     .catch(err => console.error("❌ MongoDB bağlantı xətası:", err.message));
 
-// 2. Render üçün PORT hissəsini belə yaz:
-const PORT = process.env.PORT || 3000; 
-
-// 3. io-nu belə başladın:
-const server = require('http').createServer();
-const io = require('socket.io')(server, {
-    cors: { origin: "*" }
-});
-
 // İstifadəçi Modeli
 const UserSchema = new mongoose.Schema({
     username: { type: String, unique: true, required: true },
-    balance: { type: Number, default: 1000 } // Başlanğıc balans
+    balance: { type: Number, default: 1000 }
 });
 const User = mongoose.model('User', UserSchema);
 
@@ -123,33 +121,33 @@ async function finishGame(roomId, winnerData = null) {
 
 // --- SOCKET HADİSƏLƏRİ ---
 io.on('connection', (socket) => {
+    console.log("Yeni qoşulma:", socket.id);
 
- socket.on('join_room', async (data) => {
-    console.log("Giriş cəhdi gəldi:", data.username);
-    
-    // 5 saniyə ərzində baza cavab verməsə, fırlanmanı dayandır
-    const timeout = setTimeout(() => {
-        socket.emit('error_message', 'Baza bağlantısı çox gecikir. İnterneti və IP icazəsini yoxlayın.');
-    }, 5000);
-
-    try {
-        let user = await User.findOne({ username: data.username });
-        if (!user) {
-            user = await User.create({ username: data.username, balance: 1000 });
-            console.log("Yeni istifadəçi yaradıldı:", user.username);
-        }
+    socket.on('join_room', async (data) => {
+        console.log("Giriş cəhdi gəldi:", data.username);
         
-        clearTimeout(timeout); // Uğurlu olsa timeout-u ləğv et
-        socket.emit('login_confirmed', user);
-        broadcastRoomList();
-        console.log("Giriş uğurludur!");
+        const timeout = setTimeout(() => {
+            socket.emit('error_message', 'Baza bağlantısı gecikir. Atlas IP icazəsini yoxlayın.');
+        }, 5000);
 
-    } catch (err) {
-        clearTimeout(timeout);
-        console.error("Giriş xətası:", err.message);
-        socket.emit('error_message', 'Sistem xətası: ' + err.message);
-    }
-});
+        try {
+            let user = await User.findOne({ username: data.username });
+            if (!user) {
+                user = await User.create({ username: data.username, balance: 1000 });
+                console.log("Yeni istifadəçi yaradıldı:", user.username);
+            }
+            
+            clearTimeout(timeout);
+            socket.emit('login_confirmed', user);
+            broadcastRoomList();
+            console.log("🚀 Giriş uğurludur:", user.username);
+
+        } catch (err) {
+            clearTimeout(timeout);
+            console.error("Giriş xətası:", err.message);
+            socket.emit('error_message', 'Sistem xətası: ' + err.message);
+        }
+    });
 
     socket.on('create_custom_room', (data) => {
         const roomId = "room_" + Date.now();
@@ -257,4 +255,6 @@ function startSekaRound(roomId) {
     });
 }
 
-console.log('MongoDB Seka Server 3000 portunda aktivdir...');
+server.listen(PORT, () => {
+    console.log(`🚀 Seka Server ${PORT} portunda aktivdir...`);
+});
