@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 
 // --- MONGODB BAĞLANTISI ---
 // 'seka_game' adlı verilənlər bazasına bağlanır
-mongoose.connect('mongodb+srv://teymurisbarov:<db_password>@cluster0.1xrr77f.mongodb.net/?appName=Cluster0')
+mongoose.connect('mongodb+srv://teymurisbarov:teymurisbarov@cluster0.1xrr77f.mongodb.net/?appName=Cluster0')
     .then(() => console.log("MongoDB-yə uğurla bağlanıldı"))
     .catch(err => console.error("MongoDB xətası:", err));
 
