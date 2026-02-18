@@ -6,6 +6,18 @@ let rooms = {};
 let turnTimers = {}; 
 let users = []; 
 
+// Otaq siyahısını bütün istifadəçilərə yeniləyir
+function broadcastRoomList() {
+    const roomList = Object.values(rooms).map(r => ({
+        id: r.id, 
+        name: r.name, 
+        players: r.players.length, 
+        maxPlayers: r.maxPlayers, 
+        status: r.status
+    }));
+    io.emit('update_room_list', roomList);
+}
+
 // --- 1. SEKA OYUN MƏNTİQİ ---
 function shuffleAndDeal(players) {
     const suits = ['Hearts', 'Spades', 'Clubs', 'Diamonds'];
@@ -17,7 +29,7 @@ function shuffleAndDeal(players) {
     let deck = [];
     suits.forEach(suit => values.forEach(val => deck.push({ suit, value: val.v, score: val.s })));
     
-    // Shuffle
+    // Shuffle (Qarışdırmaq)
     for (let i = deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -26,7 +38,7 @@ function shuffleAndDeal(players) {
     players.forEach(p => {
         p.hand = [deck.pop(), deck.pop(), deck.pop()];
         p.score = calculateSekaScore(p.hand);
-        p.status = 'active';
+        p.status = 'active'; 
     });
 }
 
@@ -52,20 +64,26 @@ function finishGame(roomId, winnerData = null) {
     if (winnerData) {
         winner = winnerData;
     } else {
-        // Ən yüksək xalı olan aktiv oyunçunu tap
-        const activeOnes = room.players.filter(p => p.status === 'active');
-        winner = activeOnes.sort((a, b) => b.score - a.score)[0];
+        // Yalnız aktiv qalanlar arasında müqayisə apar
+        const contenders = room.players.filter(p => p.status === 'active');
+        winner = contenders.sort((a, b) => b.score - a.score)[0];
     }
 
     io.to(roomId).emit('game_over', { 
         winner: winner.username || winner.name, 
-        score: winner.score || '', 
-        totalBank: room.totalBank 
+        score: winner.score || 0, 
+        totalBank: room.totalBank,
+        allHands: room.players.filter(p => p.status === 'active').map(p => ({
+            username: p.username,
+            hand: p.hand,
+            score: p.score
+        }))
     });
 
     room.status = 'waiting';
-    room.lastBet = 0.20;
+    room.lastBet = 0.20; // Oyun bitəndə mərci sıfırla
     if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
+    broadcastRoomList();
 }
 
 function startTurnTimer(roomId) {
@@ -74,13 +92,14 @@ function startTurnTimer(roomId) {
     if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
     
     const activePlayer = room.players[room.turnIndex];
-    
+    if (!activePlayer) return;
+
     turnTimers[roomId] = setTimeout(() => {
         processMove(roomId, activePlayer.username, 'pass');
     }, 30500); 
 }
 
-function finalizeTurn(roomId) {
+function finalizeTurn(roomId, lastActionType = '') {
     const room = rooms[roomId];
     let nextIndex = (room.turnIndex + 1) % room.players.length;
     let loop = 0;
@@ -92,6 +111,7 @@ function finalizeTurn(roomId) {
     room.turnIndex = nextIndex;
 
     const activeCount = room.players.filter(p => p.status === 'active').length;
+    
     if (activeCount <= 1) {
         finishGame(roomId);
     } else {
@@ -99,7 +119,8 @@ function finalizeTurn(roomId) {
             players: room.players,
             totalBank: room.totalBank,
             activePlayer: room.players[room.turnIndex].username,
-            lastBet: room.lastBet
+            lastBet: room.lastBet,
+            lastAction: lastActionType // React tərəfində 10s taymeri üçün
         });
         startTurnTimer(roomId);
     }
@@ -115,12 +136,11 @@ function processMove(roomId, username, moveType, amount = 0) {
 
     if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
 
-    // SEKA və ya 50/50 Təklifi
     if (moveType === 'offer_seka' || moveType === 'offer_split') {
         const opponent = room.players.find(p => p.username !== username && p.status === 'active');
         if (opponent) {
             io.to(opponent.id).emit('offer_received', { type: moveType, from: username });
-            return; // Cavab gələnə qədər gözləyirik
+            return; 
         }
     }
 
@@ -134,15 +154,16 @@ function processMove(roomId, username, moveType, amount = 0) {
         return;
     }
 
-    finalizeTurn(roomId);
+    finalizeTurn(roomId, moveType);
 }
 
-// --- 4. SOCKET HADİSƏLƏRİ ---
+// --- 4. SOCKET BAĞLANTISI ---
 io.on('connection', (socket) => {
 
     socket.on('join_room', (data) => {
         const user = users.find(u => u.username === data.username) || { username: data.username, balance: 1000 };
         socket.emit('login_confirmed', user);
+        broadcastRoomList();
     });
 
     socket.on('create_custom_room', (data) => {
@@ -158,16 +179,9 @@ io.on('connection', (socket) => {
             lastBet: 0.20,
             status: 'waiting'
         };
-        const roomList = Object.values(rooms).map(r => ({
-    id: r.id, 
-    name: r.name, 
-    players: r.players.length, 
-    maxPlayers: r.maxPlayers, 
-    status: r.status
-}));
-io.emit('update_room_list', roomList);
         socket.join(roomId);
         socket.emit('room_created_success', rooms[roomId]);
+        broadcastRoomList();
     });
 
     socket.on('join_custom_room', (data) => {
@@ -178,22 +192,27 @@ io.emit('update_room_list', roomList);
             room.players.push({ username, id: socket.id, hand: [], score: 0, status: 'waiting' });
             socket.emit('room_joined_success', room);
             io.to(roomId).emit('player_joined', { players: room.players });
+            broadcastRoomList();
         }
     });
 
     socket.on('start_game_manual', (data) => {
         const room = rooms[data.roomId];
-        if (room && room.creator === data.username && room.players.length >= 2) {
+        if (room && room.players.length >= 2) {
             room.status = 'playing';
             room.totalBank = parseFloat((room.players.length * 0.50).toFixed(2));
+            room.lastBet = 0.20; // Hər yeni raund minimal mərcdən başlayır
+            
             shuffleAndDeal(room.players);
             room.turnIndex = 0;
+            
             io.to(data.roomId).emit('battle_start', {
                 players: room.players,
                 totalBank: room.totalBank,
                 activePlayer: room.players[0].username,
-                lastBet: 0.20
+                lastBet: room.lastBet
             });
+            broadcastRoomList();
             startTurnTimer(data.roomId);
         }
     });
@@ -202,9 +221,8 @@ io.emit('update_room_list', roomList);
         processMove(data.roomId, data.username, data.moveType, data.amount);
     });
 
-    // TƏKLİFƏ CAVAB (Qəbul/Rədd)
     socket.on('respond_to_offer', (data) => {
-        const { roomId, type, accepted, username } = data;
+        const { roomId, type, accepted } = data;
         const room = rooms[roomId];
         if (!room) return;
 
@@ -212,10 +230,12 @@ io.emit('update_room_list', roomList);
             if (type === 'offer_split') {
                 const activeOnes = room.players.filter(p => p.status === 'active');
                 const winAmt = (room.totalBank / activeOnes.length).toFixed(2);
-                finishGame(roomId, { username: 'BÖLGÜ 🤝', score: `Hərəyə ${winAmt} AZN` });
+                finishGame(roomId, { name: 'BÖLGÜ 🤝', score: `Hərəyə ${winAmt} AZN` });
             } else if (type === 'offer_seka') {
-                // Seka: Bank qalır, kartlar təzələnir
+                // SEKA: Kartlar yenidən paylanır, mərc sıfırlanır (0.20), bank qalır
+                room.lastBet = 0.20;
                 shuffleAndDeal(room.players.filter(p => p.status === 'active'));
+                
                 io.to(roomId).emit('battle_start', {
                     players: room.players,
                     totalBank: room.totalBank,
@@ -225,20 +245,14 @@ io.emit('update_room_list', roomList);
                 startTurnTimer(roomId);
             }
         } else {
-            // Rədd edildisə, oyun növbəti oyunçuya keçir və ya davam edir
-            io.to(roomId).emit('update_game_state', {
-                players: room.players,
-                totalBank: room.totalBank,
-                activePlayer: room.players[room.turnIndex].username,
-                lastBet: room.lastBet
-            });
-            startTurnTimer(roomId);
+            // Təklif rədd edildisə oyuna davam
+            finalizeTurn(roomId, 'offer_rejected');
         }
     });
 
     socket.on('disconnect', () => {
-        // Disconnect məntiqi burda (opsional)
+        // Otaqdan çıxan oyunçunu təmizləmək istəsən bura yaza bilərsən
     });
 });
 
-console.log('Seka Server 3000 portunda aktivdir...');
+console.log('Seka Server v2.0 (10s Karti De + Reset Bet) 3000 portunda aktivdir...');
