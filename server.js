@@ -162,15 +162,19 @@ function startSekaRound(roomId) {
     if (!room) return;
     room.status = 'playing';
     room.startTimerActive = false;
-    
-    const participants = room.players.filter(p => p.status === 'ready');
+    room.players.forEach(p => {
+        if (p.status === 'ready') {
+            p.status = 'active';
+        }
+    });
+    const activePlayers = room.players.filter(p => p.status === 'active');
     shuffleAndDeal(participants);
     room.turnIndex = 0;
 
     io.to(roomId).emit('battle_start', {
         players: room.players,
         totalBank: room.totalBank,
-        activePlayer: participants[0].username,
+        activePlayer: activePlayers[0].username,
         lastBet: 0.20
     });
 }
