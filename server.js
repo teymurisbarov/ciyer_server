@@ -30,9 +30,10 @@ let rooms = {};
 let turnTimers = {};
 function nextTurn(roomId) {
     const room = rooms[roomId];
-    if (!room) return;
+    if (!room || room.status !== 'playing') return;
 
     const activePlayers = room.players.filter(p => p.status === 'active');
+    if (activePlayers.length < 2) return; // Oyun bitibsə növbə dəyişmə
     
     // Növbəni dəyiş
     room.turnIndex = (room.turnIndex + 1) % activePlayers.length;
@@ -120,13 +121,14 @@ function shuffleAndDeal(players) {
 async function finishGame(roomId, winnerData = null) {
     const room = rooms[roomId];
     if (!room) return;
-
+if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
     let winner;
     const activeOnes = room.players.filter(p => p.status === 'active');
     
     if (winnerData) {
         winner = winnerData;
     } else {
+        const activeOnes = room.players.filter(p => p.status === 'active');
         winner = activeOnes.sort((a, b) => b.score - a.score)[0];
     }
 
@@ -136,7 +138,11 @@ async function finishGame(roomId, winnerData = null) {
             winner: winner.username,
             winAmount: room.totalBank,
             newBalance: newBalance,
-            allHands: activeOnes.map(p => ({ username: p.username, hand: p.hand, score: p.score }))
+            allHands: allPlayersInRound.map(p => ({ 
+                username: p.username, 
+                hand: p.hand, 
+                score: p.score,
+                status: p.status}))
         });
     }
 
@@ -324,12 +330,19 @@ socket.on('get_user_data', async (data) => {
     socket.on('make_move', async (data) => {
     const room = rooms[data.roomId];
     if (!room || room.status !== 'playing') return;
-
-    const activePlayers = room.players.filter(p => p.status === 'active');
+    let activePlayers = room.players.filter(p => p.status === 'active');
     const currentPlayer = activePlayers[room.turnIndex];
 
     // Təhlükəsizlik: Yalnız növbəsi olan oyunçu hərəkət edə bilər
-    if (currentPlayer.username !== data.username) return;
+    if (!currentPlayer || currentPlayer.username !== data.username) {
+        console.log("Sıra bu oyunçuda deyil:", data.username);
+        return;
+    }
+    const currentDbUser = await User.findOne({ username: data.username });
+        if (currentDbUser.balance < betAmount) {
+            socket.emit('error_message', 'Balans kifayət deyil!');
+            return;
+        }
 
     if (data.moveType === 'raise') {
         const betAmount = parseFloat(data.amount);
@@ -352,15 +365,19 @@ socket.on('get_user_data', async (data) => {
     }
     else if (data.moveType === 'fold') {
         currentPlayer.status = 'folded';
-        io.to(data.roomId).emit('move_made', { username: data.username, moveType: 'fold' });
+        io.to(data.roomId).emit('move_made', { username: data.username, moveType: 'fold', totalBank: room.totalBank });
         
         const remainingActive = room.players.filter(p => p.status === 'active');
         if (remainingActive.length === 1) {
             finishGame(data.roomId, remainingActive[0]);
         } else {
+            room.turnIndex = (room.turnIndex - 1 + activePlayers.length) % activePlayers.length;
             nextTurn(data.roomId);
         }
     }
+    else if (data.moveType === 'show') {
+         // İki nəfər qalanda kartları müqayisə etmək üçün finishGame çağırılır
+         finishGame(data.roomId);}
 });
 });
 
