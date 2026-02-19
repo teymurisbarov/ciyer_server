@@ -160,17 +160,28 @@ async function finishGame(roomId, winnerData = null) {
 function startSekaRound(roomId) {
     const room = rooms[roomId];
     if (!room) return;
+    
     room.status = 'playing';
     room.startTimerActive = false;
+    
+    // 1. Hazır olan oyunçuları aktiv statusuna keçir
     room.players.forEach(p => {
         if (p.status === 'ready') {
             p.status = 'active';
         }
     });
+
+    // 2. Aktiv oyunçuları tap
     const activePlayers = room.players.filter(p => p.status === 'active');
-    shuffleAndDeal(participants);
+    
+    // XƏTANIN DÜZƏLİŞİ: Burada 'participants' yox, 'activePlayers' olmalıdır
+    shuffleAndDeal(activePlayers); 
+    
     room.turnIndex = 0;
 
+    console.log(`Oyun başladı: ${roomId}, Aktiv oyunçu sayı: ${activePlayers.length}`);
+
+    // 3. Frontend-ə siqnal göndər
     io.to(roomId).emit('battle_start', {
         players: room.players,
         totalBank: room.totalBank,
