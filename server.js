@@ -28,6 +28,30 @@ const User = mongoose.model('User', UserSchema);
 
 let rooms = {};
 let turnTimers = {};
+function nextTurn(roomId) {
+    const room = rooms[roomId];
+    if (!room) return;
+
+    const activePlayers = room.players.filter(p => p.status === 'active');
+    
+    // Növbəni dəyiş
+    room.turnIndex = (room.turnIndex + 1) % activePlayers.length;
+    const nextPlayer = activePlayers[room.turnIndex];
+
+    // Köhnə taymeri dayandır və yenisini başlat
+    if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
+
+    io.to(roomId).emit('next_turn', {
+        activePlayer: nextPlayer.username,
+        turnIndex: room.turnIndex,
+        totalBank: room.totalBank,
+        lastBet: room.lastBet
+    });
+    turnTimers[roomId] = setTimeout(() => {
+        console.log(`${nextPlayer.username} vaxtı bitirdi, növbə keçir.`);
+        nextTurn(roomId); 
+    }, 30000);
+}
 
 // --- KÖMƏKÇİ FUNKSİYALAR ---
 
@@ -298,16 +322,46 @@ socket.on('get_user_data', async (data) => {
 });
 
     socket.on('make_move', async (data) => {
-        const room = rooms[data.roomId];
-        if (!room) return;
+    const room = rooms[data.roomId];
+    if (!room || room.status !== 'playing') return;
 
-        if (data.moveType === 'raise') {
-            const newBal = await updateDbBalance(data.username, -data.amount);
-            room.totalBank = parseFloat((room.totalBank + data.amount).toFixed(2));
-            socket.emit('balance_updated', { newBalance: newBal });
+    const activePlayers = room.players.filter(p => p.status === 'active');
+    const currentPlayer = activePlayers[room.turnIndex];
+
+    // Təhlükəsizlik: Yalnız növbəsi olan oyunçu hərəkət edə bilər
+    if (currentPlayer.username !== data.username) return;
+
+    if (data.moveType === 'raise') {
+        const betAmount = parseFloat(data.amount);
+        const newBal = await updateDbBalance(data.username, -betAmount);
+        
+        room.totalBank = parseFloat((room.totalBank + betAmount).toFixed(2));
+        room.lastBet = betAmount;
+
+        socket.emit('balance_updated', { newBalance: newBal });
+        
+        io.to(data.roomId).emit('move_made', {
+            username: data.username,
+            moveType: 'raise',
+            amount: betAmount,
+            totalBank: room.totalBank
+        });
+
+        // Hərəkətdən sonra növbəni ötür
+        nextTurn(data.roomId);
+    }
+    else if (data.moveType === 'fold') {
+        currentPlayer.status = 'folded';
+        io.to(data.roomId).emit('move_made', { username: data.username, moveType: 'fold' });
+        
+        const remainingActive = room.players.filter(p => p.status === 'active');
+        if (remainingActive.length === 1) {
+            finishGame(data.roomId, remainingActive[0]);
+        } else {
+            nextTurn(data.roomId);
         }
-        // Növbəti gediş məntiqləri bura...
-    });
+    }
+});
 });
 
 // 4. SERVERİ BAŞLAT
