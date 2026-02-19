@@ -52,10 +52,15 @@ function nextTurn(roomId) {
     });
 
     turnTimers[roomId] = setTimeout(() => {
-        console.log(`${nextPlayer.username} vaxtı bitirdi, pas keçir.`);
-        // Avtomatik fold məntiqi bura əlavə edilə bilər
+    const activePlayers = room.players.filter(p => p.status === 'active');
+    const currentPlayer = activePlayers[room.turnIndex];
+    
+    if (currentPlayer) {
+        currentPlayer.status = 'folded'; // Vaxtı bitəni sıradan çıxar!
+        io.to(roomId).emit('move_made', { username: currentPlayer.username, moveType: 'timeout_fold' });
         nextTurn(roomId); 
-    }, 30000);
+    }
+}, 30000);
 }
 
 async function updateDbBalance(username, amount) {
