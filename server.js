@@ -34,7 +34,10 @@ function nextTurn(roomId) {
     if (!room || room.status !== 'playing') return;
 
     const activePlayers = room.players.filter(p => p.status === 'active');
-    if (activePlayers.length < 2) return;
+    if (activePlayers.length < 2) {
+        finishGame(roomId, activePlayers[0]);
+        return;
+    }
 
     room.turnIndex = (room.turnIndex + 1) % activePlayers.length;
     const nextPlayer = activePlayers[room.turnIndex];
@@ -292,11 +295,13 @@ io.on('connection', (socket) => {
         const room = rooms[data.roomId];
         if (!room || room.status !== 'playing') return;
 
-        const activePlayers = room.players.filter(p => p.status === 'active');
-        const currentPlayer = activePlayers[room.turnIndex];
+        let activePlayers = room.players.filter(p => p.status === 'active');
+        let currentPlayer = activePlayers[room.turnIndex];
 
-        if (!currentPlayer || currentPlayer.username !== data.username) return;
-
+        if (!currentPlayer || currentPlayer.username !== data.username) {
+        console.log("Yanlış oyunçu gediş etməyə çalışır:", data.username);
+        return;
+    }
         if (data.moveType === 'raise') {
             const betAmount = parseFloat(data.amount);
             const userDoc = await User.findOne({ username: data.username });
