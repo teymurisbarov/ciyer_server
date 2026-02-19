@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const http = require('http');
-// 1. RENDER ÜÇÜN PORT VƏ SERVER AYARLARI
+
 const PORT = process.env.PORT || 3000; 
 const server = http.createServer((req, res) => {
     res.writeHead(200);
@@ -12,14 +12,12 @@ const io = require('socket.io')(server, {
     transports: ['websocket', 'polling']
 });
 
-// 2. MONGODB BAĞLANTISI
 const uri = "mongodb+srv://admin:123@cluster0.1xrr77f.mongodb.net/seka_game?retryWrites=true&w=majority";
 
 mongoose.connect(uri)
     .then(() => console.log("✅ MongoDB-yə uğurla bağlanıldı"))
     .catch(err => console.error("❌ MongoDB bağlantı xətası:", err.message));
 
-// 3. MODELLƏR VƏ GLOBAL DƏYİŞƏNLƏR
 const UserSchema = new mongoose.Schema({
     username: { type: String, unique: true, required: true },
     balance: { type: Number, default: 1000 }
@@ -28,18 +26,19 @@ const User = mongoose.model('User', UserSchema);
 
 let rooms = {};
 let turnTimers = {};
+
+// --- KÖMƏKÇİ FUNKSİYALAR ---
+
 function nextTurn(roomId) {
     const room = rooms[roomId];
     if (!room || room.status !== 'playing') return;
 
     const activePlayers = room.players.filter(p => p.status === 'active');
-    if (activePlayers.length < 2) return; // Oyun bitibsə növbə dəyişmə
-    
-    // Növbəni dəyiş
+    if (activePlayers.length < 2) return;
+
     room.turnIndex = (room.turnIndex + 1) % activePlayers.length;
     const nextPlayer = activePlayers[room.turnIndex];
 
-    // Köhnə taymeri dayandır və yenisini başlat
     if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
 
     io.to(roomId).emit('next_turn', {
@@ -48,13 +47,13 @@ function nextTurn(roomId) {
         totalBank: room.totalBank,
         lastBet: room.lastBet
     });
+
     turnTimers[roomId] = setTimeout(() => {
-        console.log(`${nextPlayer.username} vaxtı bitirdi, növbə keçir.`);
+        console.log(`${nextPlayer.username} vaxtı bitirdi, pas keçir.`);
+        // Avtomatik fold məntiqi bura əlavə edilə bilər
         nextTurn(roomId); 
     }, 30000);
 }
-
-// --- KÖMƏKÇİ FUNKSİYALAR ---
 
 async function updateDbBalance(username, amount) {
     try {
@@ -75,7 +74,7 @@ function broadcastRoomList() {
         id: r.id,
         name: r.name,
         playersCount: r.players.length,
-        maxPlayers: r.maxPlayers, // Otağın öz limitini göndər
+        maxPlayers: r.maxPlayers,
         status: r.status
     }));
     io.emit('update_room_list', list);
@@ -103,7 +102,6 @@ function shuffleAndDeal(players) {
     let deck = [];
     suits.forEach(suit => values.forEach(val => deck.push({ suit, value: val.v, score: val.s })));
     
-    // Shuffle
     for (let i = deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -121,14 +119,15 @@ function shuffleAndDeal(players) {
 async function finishGame(roomId, winnerData = null) {
     const room = rooms[roomId];
     if (!room) return;
-if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
+
+    if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
+
     let winner;
     const activeOnes = room.players.filter(p => p.status === 'active');
     
     if (winnerData) {
         winner = winnerData;
     } else {
-        const activeOnes = room.players.filter(p => p.status === 'active');
         winner = activeOnes.sort((a, b) => b.score - a.score)[0];
     }
 
@@ -138,19 +137,23 @@ if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
             winner: winner.username,
             winAmount: room.totalBank,
             newBalance: newBalance,
-            allHands: allPlayersInRound.map(p => ({ 
+            allHands: room.players.map(p => ({ 
                 username: p.username, 
                 hand: p.hand, 
                 score: p.score,
-                status: p.status}))
+                status: p.status
+            }))
         });
     }
 
     room.status = 'waiting';
     room.totalBank = 0;
     room.lastBet = 0.20;
-    room.players.forEach(p => p.status = 'waiting');
-    if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
+    room.players.forEach(p => {
+        p.status = 'waiting';
+        p.hand = [];
+        p.score = 0;
+    });
     broadcastRoomList();
 }
 
@@ -161,8 +164,6 @@ function startSekaRound(roomId) {
     room.startTimerActive = false;
     
     const participants = room.players.filter(p => p.status === 'ready');
-    participants.forEach(p => p.status = 'active');
-    
     shuffleAndDeal(participants);
     room.turnIndex = 0;
 
@@ -177,8 +178,6 @@ function startSekaRound(roomId) {
 // --- SOCKET HADİSƏLƏRİ ---
 
 io.on('connection', (socket) => {
-    console.log("Bağlantı quruldu:", socket.id);
-
     socket.on('join_room', async (data) => {
         try {
             let user = await User.findOne({ username: data.username });
@@ -187,201 +186,142 @@ io.on('connection', (socket) => {
             }
             socket.emit('login_confirmed', user);
             broadcastRoomList();
-            console.log("🚀 Giriş:", user.username);
         } catch (err) {
             socket.emit('error_message', 'Baza xətası: ' + err.message);
         }
     });
 
     socket.on('create_custom_room', (data) => {
-    const roomId = "room_" + Date.now();
-    rooms[roomId] = {
-        id: roomId,
-        name: data.roomName,
-        creator: data.username,
-        players: [], 
-        maxPlayers: parseInt(data.maxPlayers) || 2,
-        totalBank: 0,
-        status: 'waiting',
-        lastBet: 0.20, // Başlanğıc mərcləri 0.20-dən başlayır
-        turnIndex: 0,
-        startTimerActive: false
-    };
-
-    // 2. Yaradanı socket kanalına qoş
-    socket.join(roomId);
-
-    // 3. Yaradanı oyunçu siyahısına əlavə et
-    const creatorPlayer = {
-        username: data.username,
-        id: socket.id,
-        status: 'waiting',
-        hand: [],
-        score: 0
-    };
-    rooms[roomId].players.push(creatorPlayer);
-
-    // 4. Yaradana cavab ver
-    socket.emit('room_created_success', rooms[roomId]);
-    
-    // 5. Hamıya siyahını yenilə
-    broadcastRoomList();
-    console.log(`Otaq yarandı: ${roomId}, Yaradan: ${data.username}`);
-});
-
-    socket.on('join_custom_room', (data) => {
-    const { roomId, username } = data;
-    const room = rooms[roomId];
-
-    if (room) {
-        if (room.status !== 'waiting') {
-            socket.emit('error_message', 'Oyun artıq başlayıb!');
-            return;
-        }
-        if (room.players.length >= room.maxPlayers) {
-            socket.emit('error_message', 'Otaq doludur!');
-            return;
-        }
-
-        // 1. Socket-i virtual otağa qoş (ƏN VACİB HİSSƏ)
-        socket.join(roomId);
-
-        // 2. Oyunçu siyahıda yoxdursa əlavə et
-        const isExist = room.players.find(p => p.username === username);
-        if (!isExist) {
-            room.players.push({
-                username: username,
+        const roomId = "room_" + Date.now();
+        rooms[roomId] = {
+            id: roomId,
+            name: data.roomName,
+            creator: data.username,
+            players: [{
+                username: data.username,
                 id: socket.id,
                 status: 'waiting',
                 hand: [],
                 score: 0
-            });
-        }
-
-        // 3. Qoşulan şəxsə uğur mesajı göndər (Ekranı dəyişsin deyə)
-        socket.emit('room_joined_success', room);
-
-        // 4. Otaqdakı hər kəsə (yeni gələn daxil) yeni siyahını göndər
-        io.to(roomId).emit('player_joined', { 
-            players: room.players,
-            roomId: roomId 
-        });
-
-        // 5. Lobby-də sayları yenilə
+            }],
+            maxPlayers: parseInt(data.maxPlayers) || 2,
+            totalBank: 0,
+            status: 'waiting',
+            lastBet: 0.20,
+            turnIndex: 0,
+            startTimerActive: false
+        };
+        socket.join(roomId);
+        socket.emit('room_created_success', rooms[roomId]);
         broadcastRoomList();
-        console.log(`${username} otağa girdi: ${roomId}`);
-    } else {
-        socket.emit('error_message', 'Otaq tapılmadı!');
-    }
-});
-socket.on('get_user_data', async (data) => {
-    try {
-        const user = await User.findOne({ username: data.username });
-        if (user) {
-            socket.emit('user_data_res', user);
+    });
+
+    socket.on('join_custom_room', (data) => {
+        const { roomId, username } = data;
+        const room = rooms[roomId];
+        if (room) {
+            if (room.status !== 'waiting' || room.players.length >= room.maxPlayers) {
+                socket.emit('error_message', 'Otağa girmək mümkün deyil.');
+                return;
+            }
+            socket.join(roomId);
+            if (!room.players.find(p => p.username === username)) {
+                room.players.push({ username, id: socket.id, status: 'waiting', hand: [], score: 0 });
+            }
+            socket.emit('room_joined_success', room);
+            io.to(roomId).emit('player_joined', { players: room.players, roomId });
+            broadcastRoomList();
         }
-    } catch (err) {
-        console.error("İstifadəçi datası çəkilərkən xəta:", err);
-    }
-});
+    });
+
     socket.on('enter_round', async (data) => {
-    const room = rooms[data.roomId];
-    if (!room) return;
-    const player = room.players.find(p => p.username === data.username);
+        const room = rooms[data.roomId];
+        if (!room) return;
+        const player = room.players.find(p => p.username === data.username);
 
-    if (player && player.status === 'waiting') {
-        const currentDbUser = await User.findOne({ username: data.username });
-        
-        // Yoxlama: Balans 0.20-dən azdırsa icazə vermə
-        if (currentDbUser.balance < 0.20) {
-            socket.emit('error_message', 'Balansınızda kifayət qədər vəsait yoxdur (Min: 0.20 AZN)!');
-            return;
+        if (player && player.status === 'waiting') {
+            const currentDbUser = await User.findOne({ username: data.username });
+            if (!currentDbUser || currentDbUser.balance < 0.20) {
+                socket.emit('error_message', 'Balans kifayət deyil!');
+                return;
+            }
+
+            const newBal = await updateDbBalance(data.username, -0.20);
+            player.status = 'ready';
+            room.totalBank = parseFloat((room.totalBank + 0.20).toFixed(2));
+
+            io.to(data.roomId).emit('update_players', {
+                players: room.players,
+                totalBank: room.totalBank,
+                username: data.username,
+                newBalance: newBal
+            });
+
+            const readyPlayers = room.players.filter(p => p.status === 'ready');
+            if (readyPlayers.length >= 2 && !room.startTimerActive) {
+                room.startTimerActive = true;
+                let timeLeft = 10;
+                const countdown = setInterval(() => {
+                    io.to(data.roomId).emit('start_countdown', { timeLeft });
+                    timeLeft--;
+                    if (timeLeft < 0) {
+                        clearInterval(countdown);
+                        startSekaRound(data.roomId);
+                    }
+                }, 1000);
+            }
         }
-
-        // Balansdan 0.20 çıxılır
-        const newBal = await updateDbBalance(data.username, -0.20);
-        player.status = 'ready';
-        room.totalBank = parseFloat((room.totalBank + 0.20).toFixed(2));
-
-        io.to(data.roomId).emit('update_players', {
-            players: room.players,
-            totalBank: room.totalBank,
-            username: data.username,
-            newBalance: newBal
-        });
-
-        // Oyunun başlama məntiqi (2 nəfər hazır olanda)
-        const readyPlayers = room.players.filter(p => p.status === 'ready');
-        if (readyPlayers.length >= 2 && !room.startTimerActive) {
-            room.startTimerActive = true;
-            let timeLeft = 10;
-            const countdown = setInterval(() => {
-                io.to(data.roomId).emit('start_countdown', { timeLeft });
-                timeLeft--;
-                if (timeLeft < 0) {
-                    clearInterval(countdown);
-                    startSekaRound(data.roomId);
-                }
-            }, 1000);
-        }
-    }
-});
+    });
 
     socket.on('make_move', async (data) => {
-    const room = rooms[data.roomId];
-    if (!room || room.status !== 'playing') return;
-    let activePlayers = room.players.filter(p => p.status === 'active');
-    const currentPlayer = activePlayers[room.turnIndex];
+        const room = rooms[data.roomId];
+        if (!room || room.status !== 'playing') return;
 
-    // Təhlükəsizlik: Yalnız növbəsi olan oyunçu hərəkət edə bilər
-    if (!currentPlayer || currentPlayer.username !== data.username) {
-        console.log("Sıra bu oyunçuda deyil:", data.username);
-        return;
-    }
-    const currentDbUser = await User.findOne({ username: data.username });
-        if (currentDbUser.balance < betAmount) {
-            socket.emit('error_message', 'Balans kifayət deyil!');
-            return;
-        }
+        const activePlayers = room.players.filter(p => p.status === 'active');
+        const currentPlayer = activePlayers[room.turnIndex];
 
-    if (data.moveType === 'raise') {
-        const betAmount = parseFloat(data.amount);
-        const newBal = await updateDbBalance(data.username, -betAmount);
-        
-        room.totalBank = parseFloat((room.totalBank + betAmount).toFixed(2));
-        room.lastBet = betAmount;
+        if (!currentPlayer || currentPlayer.username !== data.username) return;
 
-        socket.emit('balance_updated', { newBalance: newBal });
-        
-        io.to(data.roomId).emit('move_made', {
-            username: data.username,
-            moveType: 'raise',
-            amount: betAmount,
-            totalBank: room.totalBank
-        });
+        if (data.moveType === 'raise') {
+            const betAmount = parseFloat(data.amount);
+            const userDoc = await User.findOne({ username: data.username });
+            
+            if (userDoc.balance < betAmount) {
+                socket.emit('error_message', 'Balans kifayət deyil!');
+                return;
+            }
 
-        // Hərəkətdən sonra növbəni ötür
-        nextTurn(data.roomId);
-    }
-    else if (data.moveType === 'fold') {
-        currentPlayer.status = 'folded';
-        io.to(data.roomId).emit('move_made', { username: data.username, moveType: 'fold', totalBank: room.totalBank });
-        
-        const remainingActive = room.players.filter(p => p.status === 'active');
-        if (remainingActive.length === 1) {
-            finishGame(data.roomId, remainingActive[0]);
-        } else {
-            room.turnIndex = (room.turnIndex - 1 + activePlayers.length) % activePlayers.length;
+            const newBal = await updateDbBalance(data.username, -betAmount);
+            room.totalBank = parseFloat((room.totalBank + betAmount).toFixed(2));
+            room.lastBet = betAmount;
+
+            socket.emit('balance_updated', { newBalance: newBal });
+            io.to(data.roomId).emit('move_made', {
+                username: data.username,
+                moveType: 'raise',
+                amount: betAmount,
+                totalBank: room.totalBank
+            });
             nextTurn(data.roomId);
+        } 
+        else if (data.moveType === 'fold' || data.moveType === 'pass') {
+            currentPlayer.status = 'folded';
+            io.to(data.roomId).emit('move_made', { username: data.username, moveType: 'fold', totalBank: room.totalBank });
+            
+            const remainingActive = room.players.filter(p => p.status === 'active');
+            if (remainingActive.length === 1) {
+                finishGame(data.roomId, remainingActive[0]);
+            } else {
+                room.turnIndex = (room.turnIndex - 1 + activePlayers.length) % activePlayers.length;
+                nextTurn(data.roomId);
+            }
         }
-    }
-    else if (data.moveType === 'show') {
-         // İki nəfər qalanda kartları müqayisə etmək üçün finishGame çağırılır
-         finishGame(data.roomId);}
-});
+        else if (data.moveType === 'show') {
+            finishGame(data.roomId);
+        }
+    });
 });
 
-// 4. SERVERİ BAŞLAT
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Seka Server ${PORT} portunda aktivdir...`);
 });
