@@ -76,7 +76,12 @@ async function updateDbBalance(username, amount) {
         return 0;
     }
 }
-
+async function handleWin(roomId, winnerUsername, amount) {
+    const commission = amount * 0.05;
+    const finalAmount = amount - commission;
+    const newBalance = await updateDbBalance(winnerUsername, finalAmount);
+    return { newBalance, finalAmount };
+}
 function broadcastRooms() {
     const list = Object.values(rooms).map(r => ({
         id: r.id,
@@ -128,42 +133,26 @@ function shuffleAndDeal(players) {
 async function finishGame(roomId, winnerData = null) {
     const room = rooms[roomId];
     if (!room) return;
-
     if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
 
-    let winner;
-    const activeOnes = room.players.filter(p => p.status === 'active');
-    
-    if (winnerData) {
-        winner = winnerData;
-    } else {
-        winner = activeOnes.sort((a, b) => b.score - a.score)[0];
-    }
+    let winner = winnerData || room.players.filter(p => p.status === 'active').sort((a, b) => b.score - a.score)[0];
 
     if (winner) {
-        const newBalance = await updateDbBalance(winner.username, room.totalBank);
+        const { newBalance, finalAmount } = await handleWin(roomId, winner.username, room.totalBank);
         io.to(roomId).emit('game_over', {
             winner: winner.username,
-            winAmount: room.totalBank,
+            winAmount: finalAmount.toFixed(2),
             newBalance: newBalance,
-            allHands: room.players.map(p => ({ 
-                username: p.username, 
-                hand: p.hand, 
-                score: p.score,
-                status: p.status
-            }))
+            allHands: room.players.map(p => ({ username: p.username, hand: p.hand, score: p.score }))
         });
     }
 
+    // Otağı sıfırla
     room.status = 'waiting';
     room.totalBank = 0;
-    room.lastBet = 0.20;
-    room.players.forEach(p => {
-        p.status = 'waiting';
-        p.hand = [];
-        p.score = 0;
-    });
-    broadcastRoomList();
+    room.lastBet = room.minBet; // Otağın öz minBet-i
+    room.players.forEach(p => { p.status = 'waiting'; p.hand = []; });
+    broadcastRooms();
 }
 
 function startSekaRound(roomId) {
@@ -377,74 +366,57 @@ socket.on('disconnect', () => {
 });
     socket.on('make_move', async (data) => {
     const room = rooms[data.roomId];
-    if (!room || room.status !== 'playing') return;
+    if (!room) return;
 
-    let activePlayers = room.players.filter(p => p.status === 'active');
-    let currentPlayer = activePlayers[room.turnIndex];
+    const activePlayers = room.players.filter(p => p.status === 'active');
+    const currentPlayer = activePlayers[room.turnIndex];
 
-    // --- TƏKLİF SİSTEMİ (Split və Seka) ---
-    // Bu hissədə növbə yoxlanılmır, çünki təklifi hər kəs göndərə bilər
-    if (data.moveType === 'offer_seka' || data.moveType === 'offer_split') {
-        if (activePlayers.length === 2) {
-            const opponent = activePlayers.find(p => p.username !== data.username);
-            if (opponent) {
-                io.to(opponent.id).emit('offer_received', {
-                    type: data.moveType,
-                    from: data.username,
-                    roomId: data.roomId
-                });
-            }
+    // 1. PAS (İstənilən vaxt, növbə gözləmədən)
+    if (data.moveType === 'pass' || data.moveType === 'fold') {
+        const p = room.players.find(u => u.username === data.username);
+        if (p) {
+            p.status = 'folded';
+            io.to(data.roomId).emit('move_made', { username: data.username, moveType: 'fold' });
+            
+            const rem = room.players.filter(p => p.status === 'active');
+            if (rem.length === 1) return finishGame(data.roomId, rem[0]);
+            if (currentPlayer && currentPlayer.username === data.username) nextTurn(data.roomId);
         }
-        return; // Təklif gediş sayılmır, funksiyadan çıxırıq
-    }
-
-    // --- NORMAL GEDİŞ YOXLANILMASI ---
-    if (!currentPlayer || currentPlayer.username !== data.username) {
-        console.log("Sıra bu oyunçuda deyil:", data.username);
         return;
     }
 
+    // 2. NÖVBƏLİ GEDİŞLƏR (Mərc, Seka, 50/50, Aç)
+    if (!currentPlayer || currentPlayer.username !== data.username) return;
+
     if (data.moveType === 'raise') {
-        const betAmount = parseFloat(data.amount);
-        const userDoc = await User.findOne({ username: data.username });
+        const amount = parseFloat(data.amount);
+        if (amount < room.lastBet) return socket.emit('error_message', 'Minimum mərcdən az qoymaq olmaz!');
         
-        if (!userDoc || userDoc.balance < betAmount) {
-            socket.emit('error_message', 'Balans kifayət deyil!');
-            return;
-        }
-
-        const newBal = await updateDbBalance(data.username, -betAmount);
-        room.totalBank = parseFloat((room.totalBank + betAmount).toFixed(2));
-        room.lastBet = betAmount;
-
-        socket.emit('balance_updated', { newBalance: newBal });
-        io.to(data.roomId).emit('move_made', {
-            username: data.username,
-            moveType: 'raise',
-            amount: betAmount,
-            totalBank: room.totalBank
-        });
+        await updateDbBalance(data.username, -amount);
+        room.totalBank += amount;
+        room.lastBet = amount;
+        
+        io.to(data.roomId).emit('update_game_state', { totalBank: room.totalBank, lastBet: room.lastBet, activePlayer: data.username });
         nextTurn(data.roomId);
     } 
-    else if (data.moveType === 'fold' || data.moveType === 'pass') {
-        currentPlayer.status = 'folded';
-        io.to(data.roomId).emit('move_made', { 
-            username: data.username, 
-            moveType: 'fold', 
-            totalBank: room.totalBank 
-        });
-        
-        const remainingActive = room.players.filter(p => p.status === 'active');
-        if (remainingActive.length === 1) {
-            finishGame(data.roomId, remainingActive[0]);
-        } else {
-            // Fold edəndə turnIndex-i tənzimləyirik
-            room.turnIndex = (room.turnIndex - 1 + activePlayers.length) % activePlayers.length;
-            nextTurn(data.roomId);
+    else if (data.moveType === 'offer_seka' || data.moveType === 'offer_split') {
+        const opponent = activePlayers.find(p => p.username !== data.username);
+        if (opponent) {
+            io.to(opponent.id).emit('offer_received', { type: data.moveType, from: data.username });
         }
     }
     else if (data.moveType === 'show') {
-        finishGame(data.roomId);
+        // Kartları aç və müqayisə et
+        const p1 = activePlayers[0];
+        const p2 = activePlayers[1];
+        
+        if (p1.score === p2.score) {
+            // SEKA MƏNTİQİ: Xallar bərabərdirsə, pul ortada qalır, raund yenidən başlayır
+            io.to(data.roomId).emit('seka_event', { message: "Xallar bərabərdir! SEKA başladı!" });
+            // Burada otağı sıfırlayıb amma bankı saxlayan məntiq qurulur...
+        } else {
+            finishGame(data.roomId);
+        }
     }
 });
 });
