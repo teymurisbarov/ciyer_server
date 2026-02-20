@@ -305,42 +305,7 @@ io.on('connection', (socket) => {
   });
 
   // raunda daxil olma (entry fee çıxılır və ready olur)
-  socket.on('enter_round', async (data) => { 
-    console.log('SERVER: enter_round received', data); 
-    const room = rooms[data.roomId]; 
-    console.log('Found room?', !!room, 'players:', room ? room.players.map(p=>p.username) : []);
-    if (!room) return;
-    const player = room.players.find(p => p.username === data.username);
-    const entryFee = room.minBet;
-    if (!player) return;
-
-    if (player.status !== 'waiting') {
-      socket.emit('error_message', 'Siz artıq raundda iştirak edirsiniz və ya hazır vəziyyətsiniz.');
-      return;
-    }
-
-    const currentDbUser = await User.findOne({ username: data.username });
-    if (!currentDbUser || currentDbUser.balance < entryFee) {
-      socket.emit('error_message', 'Balans kifayət deyil!');
-      return;
-    }
-
-    const newBal = await updateDbBalance(data.username, -entryFee);
-    if (newBal === null) {
-      socket.emit('error_message', 'Balans yenilənmədi.');
-      return;
-    }
-
-    player.status = 'ready';
-    player.currentBet = entryFee;
-    room.totalBank = parseFloat((room.totalBank + entryFee).toFixed(2));
-
-    io.to(data.roomId).emit('update_players', {
-      players: room.players,
-      totalBank: room.totalBank,
-      username: data.username,
-      newBalance: newBal
-    });
+  socket.on('enter_round', async (data) => { console.log('SERVER: enter_round received', data); const room = rooms[data.roomId]; console.log('SERVER: foundRoom?', !!room, 'roomId:', data.roomId); if (!room) { socket.emit('error_message', 'Otaq tapılmadı.'); return; } const player = room.players.find(p => p.username === data.username); if (!player) { socket.emit('error_message', 'Siz otaqda qeydiyyatda deyilsiniz.'); return; } const entryFee = room.minBet; if (player.status !== 'waiting') { socket.emit('error_message', 'Siz artıq raundda iştirak edirsiniz və ya hazır vəziyyətsiniz.'); return; } const currentDbUser = await User.findOne({ username: data.username }); if (!currentDbUser || currentDbUser.balance < entryFee) { socket.emit('error_message', 'Balans kifayət deyil!'); return; } const newBal = await updateDbBalance(data.username, -entryFee); if (newBal === null) { socket.emit('error_message', 'Balans yenilənmədi.'); return; } player.status = 'ready'; player.currentBet = entryFee; room.totalBank = parseFloat((room.totalBank + entryFee).toFixed(2)); io.to(data.roomId).emit('update_players', { players: room.players, totalBank: room.totalBank, username: data.username, newBalance: newBal });
 
     // hazır oyunçular 10s countdown ilə raundu başlada bilər
     const readyPlayers = room.players.filter(p => p.status === 'ready');
@@ -384,13 +349,7 @@ io.on('connection', (socket) => {
         const requiredAmount = parseFloat((room.totalBank / 2).toFixed(2));
         io.to(data.roomId).emit('seka_started', { requiredAmount });
         // seka üçün 10s deadline; qəbul edənlər requiredAmount ödəyib raunda daxil ola bilərlər
-        if (sekaTimers[roomId]) clearTimeout(sekaTimers[roomId]);
-        sekaTimers[roomId] = setTimeout(() => {
-          // seka müddəti bitdi, seka pending-ləri ləğv et
-          room.status = 'playing';
-          delete sekaTimers[roomId];
-          io.to(data.roomId).emit('seka_ended');
-        }, 10000);
+        if (sekaTimers[data.roomId]) clearTimeout(sekaTimers[data.roomId]); sekaTimers[data.roomId] = setTimeout(() => { room.status = 'playing'; delete sekaTimers[data.roomId]; io.to(data.roomId).emit('seka_ended'); }, 10000);
       }
     } else {
       // rədd edildisə təklif göndərənə məlumat ver
