@@ -134,9 +134,22 @@ async function finishGame(roomId, winnerData = null) {
     const room = rooms[roomId];
     if (!room) return;
     if (turnTimers[roomId]) clearTimeout(turnTimers[roomId]);
-
+    const activeOnes = room.players.filter(p => p.status === 'active');
     let winner = winnerData || room.players.filter(p => p.status === 'active').sort((a, b) => b.score - a.score)[0];
-
+    if (!winnerData && activeOnes.length === 2 && activeOnes[0].score === activeOnes[1].score) {
+        const commission = room.totalBank * 0.05; // 5% komissiya
+        room.totalBank -= commission;
+        
+        io.to(roomId).emit('seka_event', { 
+            message: "Xallar bərabərdir! Seka başladı.",
+            newBank: room.totalBank,
+            commission: commission
+        });
+        
+        // Oyunçuları 'waiting' statusuna keçir, amma bankı sıfırlama!
+        room.status = 'waiting'; 
+        return; 
+    }
     if (winner) {
         const { newBalance, finalAmount } = await handleWin(roomId, winner.username, room.totalBank);
         io.to(roomId).emit('game_over', {
@@ -314,18 +327,17 @@ io.on('connection', (socket) => {
         const room = rooms[data.roomId];
         if (!room) return;
         const player = room.players.find(p => p.username === data.username);
-
+        const entryFee = room.minBet; // Otağın öz limiti
         if (player && player.status === 'waiting') {
-            const currentDbUser = await User.findOne({ username: data.username });
-            if (!currentDbUser || currentDbUser.balance < 0.20) {
-                socket.emit('error_message', 'Balans kifayət deyil!');
-                return;
-            }
+        const currentDbUser = await User.findOne({ username: data.username });
+        if (!currentDbUser || currentDbUser.balance < entryFee) {
+            socket.emit('error_message', 'Balans kifayət deyil!');
+            return;
+        }
 
-            const newBal = await updateDbBalance(data.username, -0.20);
-            player.status = 'ready';
-            room.totalBank = parseFloat((room.totalBank + 0.20).toFixed(2));
-
+            const newBal = await updateDbBalance(data.username, -entryFee);
+        player.status = 'ready';
+        room.totalBank = parseFloat((room.totalBank + entryFee).toFixed(2));
             io.to(data.roomId).emit('update_players', {
                 players: room.players,
                 totalBank: room.totalBank,
