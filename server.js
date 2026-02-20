@@ -77,12 +77,13 @@ async function updateDbBalance(username, amount) {
     }
 }
 
-function broadcastRoomList() {
+function broadcastRooms() {
     const list = Object.values(rooms).map(r => ({
         id: r.id,
         name: r.name,
         playersCount: r.players.length,
         maxPlayers: r.maxPlayers,
+        minBet: r.minBet,
         status: r.status
     }));
     io.emit('update_room_list', list);
@@ -292,18 +293,22 @@ io.on('connection', (socket) => {
         }
     });
     socket.on('leave_room', (data) => {
-        const room = rooms[data.roomId];
-        if (room) {
-            room.players = room.players.filter(p => p.username !== data.username);
-            socket.leave(data.roomId);
-            if (room.players.length === 0) {
-                delete rooms[data.roomId];
-            } else {
-                io.to(data.roomId).emit('update_players', { players: room.players });
-            }
-            emitRooms();
+    const room = rooms[data.roomId];
+    if (room) {
+        // Oyunçunu otaqdan sil
+        room.players = room.players.filter(p => p.username !== data.username);
+        socket.leave(data.roomId);
+
+        // ƏGƏR OTAQDA HEÇ KİM QALMAYIBSA - OTAĞI SİL
+        if (room.players.length === 0) {
+            delete rooms[data.roomId];
+            console.log(`Otaq silindi: ${data.roomId}`);
+        } else {
+            io.to(data.roomId).emit('update_players', { players: room.players });
         }
-    });
+        broadcastRooms(); // Hamıya otağın silindiyini və ya sayın azaldığını bildir
+    }
+});
 
     socket.on('enter_round', async (data) => {
         const room = rooms[data.roomId];
@@ -343,7 +348,22 @@ io.on('connection', (socket) => {
             }
         }
     });
-
+socket.on('disconnect', () => {
+    // Oyunçu qəfil çıxanda bütün otaqları yoxla
+    Object.keys(rooms).forEach(roomId => {
+        const room = rooms[roomId];
+        const pIndex = room.players.findIndex(p => p.id === socket.id);
+        if (pIndex !== -1) {
+            room.players.splice(pIndex, 1);
+            if (room.players.length === 0) {
+                delete rooms[roomId];
+            } else {
+                io.to(roomId).emit('update_players', { players: room.players });
+            }
+        }
+    });
+    broadcastRooms();
+});
     socket.on('make_move', async (data) => {
     const room = rooms[data.roomId];
     if (!room || room.status !== 'playing') return;
