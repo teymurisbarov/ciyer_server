@@ -14,8 +14,9 @@ const io = socketio(server, {
   transports: ['websocket', 'polling']
 });
 
-const uri = process.env.MONGO_URI || "mongodb+srv://admin:123@cluster0.1xrr77f.mongodb.net/?appName=Cluster0";
-mongoose.connect(uri)
+const uri = process.env.MONGO_URI || "mongodb+srv://admin:123@cluster0.1xrr77f.mongodb.net/seka_game?retryWrites=true&w=majority";
+
+mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log("✅ MongoDB-yə uğurla bağlanıldı"))
   .catch(err => console.error("❌ MongoDB bağlantı xətası:", err.message));
 
