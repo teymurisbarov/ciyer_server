@@ -305,8 +305,10 @@ io.on('connection', (socket) => {
   });
 
   // raunda daxil olma (entry fee çıxılır və ready olur)
-  socket.on('enter_round', async (data) => {
-    const room = rooms[data.roomId];
+  socket.on('enter_round', async (data) => { 
+    console.log('SERVER: enter_round received', data); 
+    const room = rooms[data.roomId]; 
+    console.log('Found room?', !!room, 'players:', room ? room.players.map(p=>p.username) : []);
     if (!room) return;
     const player = room.players.find(p => p.username === data.username);
     const entryFee = room.minBet;
