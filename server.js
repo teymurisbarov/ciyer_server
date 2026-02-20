@@ -199,6 +199,17 @@ function startSekaRound(roomId) {
 }
 
 // --- SOCKET HADİSƏLƏRİ ---
+function emitRooms() {
+    const roomList = Object.values(rooms).map(r => ({
+        id: r.id,
+        name: r.name,
+        playersCount: r.players.length,
+        maxPlayers: r.maxPlayers,
+        minBet: r.minBet,
+        status: r.status
+    }));
+    io.emit('update_room_list', roomList);
+}
 
 io.on('connection', (socket) => {
     socket.on('offer_response', async (data) => {
@@ -247,45 +258,50 @@ io.on('connection', (socket) => {
     });
 
     socket.on('create_custom_room', (data) => {
-        const roomId = "room_" + Date.now();
-        rooms[roomId] = {
-            id: roomId,
+        const id = "room_" + Date.now();
+        rooms[id] = {
+            id,
             name: data.roomName,
-            creator: data.username,
-            players: [{
+            maxPlayers: parseInt(data.maxPlayers) || 10,
+            minBet: parseFloat(data.minBet) || 0.20,
+            players: [],
+            totalBank: 0,
+            lastBet: parseFloat(data.minBet) || 0.20,
+            status: 'waiting',
+            turnIndex: 0
+        };
+        socket.emit('room_created_success', rooms[id]);
+        emitRooms();
+    });
+
+    socket.on('join_custom_room', (data) => {
+        const room = rooms[data.roomId];
+        if (room && room.players.length < room.maxPlayers) {
+            const newUser = {
                 username: data.username,
                 id: socket.id,
                 status: 'waiting',
                 hand: [],
                 score: 0
-            }],
-            maxPlayers: parseInt(data.maxPlayers) || 2,
-            totalBank: 0,
-            status: 'waiting',
-            lastBet: 0.20,
-            turnIndex: 0,
-            startTimerActive: false
-        };
-        socket.join(roomId);
-        socket.emit('room_created_success', rooms[roomId]);
-        broadcastRoomList();
-    });
-
-    socket.on('join_custom_room', (data) => {
-        const { roomId, username } = data;
-        const room = rooms[roomId];
-        if (room) {
-            if (room.status !== 'waiting' || room.players.length >= room.maxPlayers) {
-                socket.emit('error_message', 'Otağa girmək mümkün deyil.');
-                return;
-            }
-            socket.join(roomId);
-            if (!room.players.find(p => p.username === username)) {
-                room.players.push({ username, id: socket.id, status: 'waiting', hand: [], score: 0 });
-            }
+            };
+            room.players.push(newUser);
+            socket.join(data.roomId);
             socket.emit('room_joined_success', room);
-            io.to(roomId).emit('player_joined', { players: room.players, roomId });
-            broadcastRoomList();
+            io.to(data.roomId).emit('player_joined', { players: room.players });
+            emitRooms();
+        }
+    });
+    socket.on('leave_room', (data) => {
+        const room = rooms[data.roomId];
+        if (room) {
+            room.players = room.players.filter(p => p.username !== data.username);
+            socket.leave(data.roomId);
+            if (room.players.length === 0) {
+                delete rooms[data.roomId];
+            } else {
+                io.to(data.roomId).emit('update_players', { players: room.players });
+            }
+            emitRooms();
         }
     });
 
