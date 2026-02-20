@@ -15,10 +15,9 @@ const io = socketio(server, {
 });
 
 const uri = process.env.MONGO_URI || "mongodb+srv://admin:123@cluster0.1xrr77f.mongodb.net/?appName=Cluster0";
-
-mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log("MongoDB connected"))
-  .catch(err => console.error("MongoDB connection error:", err));
+mongoose.connect(uri)
+  .then(() => console.log("✅ MongoDB-yə uğurla bağlanıldı"))
+  .catch(err => console.error("❌ MongoDB bağlantı xətası:", err.message));
 
 const UserSchema = new mongoose.Schema({
   username: { type: String, unique: true, required: true },
