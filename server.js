@@ -277,6 +277,9 @@ io.on('connection', (socket) => {
 
     socket.on('join_custom_room', (data) => {
         const room = rooms[data.roomId];
+        if (room) {
+        // Əgər eyni adla kimsə artıq otaqdadırsa, köhnəni sil (təkrarlanma olmasın)
+        room.players = room.players.filter(p => p.username !== data.username);
         if (room && room.players.length < room.maxPlayers) {
             const newUser = {
                 username: data.username,
@@ -285,12 +288,20 @@ io.on('connection', (socket) => {
                 hand: [],
                 score: 0
             };
-            room.players.push(newUser);
+            room.players.push({
+                username: data.username,
+                id: socket.id,
+                status: 'waiting'
+            });
             socket.join(data.roomId);
             socket.emit('room_joined_success', room);
             io.to(data.roomId).emit('player_joined', { players: room.players });
             emitRooms();
+            broadcastRooms();
+        } else {
+            socket.emit('error_msg', 'Otaq doludur!');
         }
+    }
     });
     socket.on('leave_room', (data) => {
     const room = rooms[data.roomId];
